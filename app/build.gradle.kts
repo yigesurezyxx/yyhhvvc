@@ -1,8 +1,9 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("com.chaquo.python")
 }
+
+apply(plugin = "com.chaquo.python")
 
 android {
     namespace = "com.parsehub.app"
@@ -54,7 +55,7 @@ android {
     }
 }
 
-chaquopy {
+configure<com.chaquo.python.gradle.ChaquopyExtension> {
     defaultConfig {
         version = "3.11"
         pip {
@@ -62,11 +63,6 @@ chaquopy {
             install("pydantic")
             install("pyyaml")
             install("parsehub")
-        }
-    }
-    productFlavors {
-        create("demo") {
-            dimension = "api"
         }
     }
 }
