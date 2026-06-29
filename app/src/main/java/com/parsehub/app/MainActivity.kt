@@ -9,17 +9,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.parsehub.app.ui.theme.ParseHubTheme
 import com.parsehub.app.ui.screens.ParseScreen
-import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(this))
-        }
-        
+
         setContent {
             ParseHubTheme {
                 Surface(

@@ -1,11 +1,9 @@
 package com.parsehub.app.ui.screens
 
 import android.Manifest
-import android.content.ContentValues
-import android.net.Uri
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -37,11 +35,7 @@ import com.parsehub.app.data.ParseResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.content.ClipboardManager
-import android.content.Context
 import java.io.File
-import java.io.FileInputStream
-import java.io.OutputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,7 +79,7 @@ fun ParseScreen() {
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    ParseRepository.getInstance().parse(url.trim())
+                    ParseRepository.getInstance(context).parse(url.trim())
                 } catch (e: Exception) {
                     ParseResult(
                         platform = null,
@@ -116,23 +110,24 @@ fun ParseScreen() {
 
         scope.launch {
             try {
-                val downloadResult = withContext(Dispatchers.IO) {
-                    ParseRepository.getInstance().download(url.trim())
-                }
-                if (!downloadResult.isSuccess) {
-                    downloadStatus = "下载失败: ${downloadResult.error}"
-                    isDownloading = false
-                    return@launch
-                }
-
                 var savedCount = 0
-                for (media in downloadResult.media) {
-                    val localPath = media.localPath ?: continue
-                    val file = File(localPath)
-                    if (!file.exists()) continue
+                var totalCount = result.media.size
 
-                    val saved = saveToGallery(context, file, media.type)
-                    if (saved) savedCount++
+                for ((index, media) in result.media.withIndex()) {
+                    downloadStatus = "下载中 (${index + 1}/$totalCount)..."
+
+                    val localPath = withContext(Dispatchers.IO) {
+                        ParseRepository.getInstance(context).downloadMedia(media)
+                    }
+
+                    if (localPath != null) {
+                        val file = File(localPath)
+                        if (file.exists()) {
+                            val saved = ParseRepository.getInstance(context)
+                                .saveToGallery(file, media.type)
+                            if (saved) savedCount++
+                        }
+                    }
                 }
 
                 downloadSuccess = savedCount > 0
@@ -477,70 +472,6 @@ fun MediaThumbnail(media: MediaInfo) {
 
 private fun isVideoType(type: String): Boolean {
     return type.contains("Video", ignoreCase = true) || 
-           type.contains("Live", ignoreCase = true)
-}
-
-private fun saveToGallery(context: Context, file: File, type: String): Boolean {
-    return try {
-        val isVideo = isVideoType(type)
-        val contentValues = ContentValues()
-        
-        val displayName = "ParseHub_${System.currentTimeMillis()}_${file.name}"
-        val mimeType = if (isVideo) {
-            when (file.extension.lowercase()) {
-                "mp4" -> "video/mp4"
-                "mov" -> "video/quicktime"
-                "mkv" -> "video/x-matroska"
-                else -> "video/*"
-            }
-        } else {
-            when (file.extension.lowercase()) {
-                "jpg", "jpeg" -> "image/jpeg"
-                "png" -> "image/png"
-                "gif" -> "image/gif"
-                "webp" -> "image/webp"
-                "heic", "heif" -> "image/heif"
-                else -> "image/*"
-            }
-        }
-
-        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            contentValues.put(
-                MediaStore.MediaColumns.RELATIVE_PATH,
-                if (isVideo) Environment.DIRECTORY_MOVIES + "/ParseHub"
-                else Environment.DIRECTORY_PICTURES + "/ParseHub"
-            )
-            contentValues.put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
-
-        val uri = if (isVideo) {
-            context.contentResolver.insert(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues
-            )
-        } else {
-            context.contentResolver.insert(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues
-            )
-        } ?: return false
-
-        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-            FileInputStream(file).use { inputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            contentValues.clear()
-            contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            context.contentResolver.update(uri, contentValues, null, null)
-        }
-
-        true
-    } catch (e: Exception) {
-        e.printStackTrace()
-        false
-    }
+           type.contains("Live", ignoreCase = true) ||
+           type.contains("video", ignoreCase = true)
 }
