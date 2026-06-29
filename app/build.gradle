@@ -1,9 +1,8 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'com.chaquo.python'
 }
-
-apply plugin: 'com.chaquo.python'
 
 android {
     namespace "com.parsehub.app"
@@ -54,7 +53,7 @@ android {
 
 chaquopy {
     defaultConfig {
-        version "3.11"
+        version "3.10"
         pip {
             install "httpx"
             install "pydantic"
