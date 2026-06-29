@@ -146,20 +146,45 @@ class ParseRepository(private val context: Context) {
         }
 
         return try {
-            val aweme = renderData.optJSONObject("aweme")
-            val detail = aweme?.optJSONObject("detail")
+            var aweme: JSONObject? = null
+
+            // 路径1: aweme.detail.awemeInfo[0] (旧版)
+            val awemeObj = renderData.optJSONObject("aweme")
+            val detail = awemeObj?.optJSONObject("detail")
             val awemeInfo = detail?.optJSONArray("awemeInfo")
                 ?.optJSONObject(0)
+            if (awemeInfo != null) aweme = awemeInfo
 
-            if (awemeInfo == null) {
-                // 尝试其他路径
+            // 路径2: loaderData 中的 videoInfoRes.item_list[0] (新版 _ROUTER_DATA)
+            if (aweme == null) {
+                val loaderData = renderData.optJSONObject("loaderData")
+                if (loaderData != null) {
+                    val keys = loaderData.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val pageData = loaderData.optJSONObject(key)
+                        val videoInfoRes = pageData?.optJSONObject("videoInfoRes")
+                        val itemList = videoInfoRes?.optJSONArray("item_list")
+                        if (itemList != null && itemList.length() > 0) {
+                            aweme = itemList.getJSONObject(0)
+                            break
+                        }
+                    }
+                }
+            }
+
+            // 路径3: CURRENT_DATA / currentData
+            if (aweme == null) {
                 val currentData = renderData.optJSONObject("CURRENT_DATA")
                     ?: renderData.optJSONObject("currentData")
-                if (currentData != null) {
-                    parseDouyinAweme(currentData)
-                } else null
+                if (currentData != null) aweme = currentData
+            }
+
+            if (aweme == null) {
+                Log.d(TAG, "在 RENDER_DATA 中未找到视频数据")
+                null
             } else {
-                parseDouyinAweme(awemeInfo)
+                parseDouyinAweme(aweme)
             }
         } catch (e: Exception) {
             Log.e(TAG, "解析 RENDER_DATA 失败", e)
@@ -189,10 +214,12 @@ class ParseRepository(private val context: Context) {
                     ?.let { if (it.length() > 0) it.getString(0) else null }
 
             if (videoUrl != null) {
+                // 去除水印: playwm -> play
+                val noWatermarkUrl = videoUrl.replace("/playwm/", "/play/")
                 mediaList.add(
                     MediaInfo(
                         type = "video",
-                        url = videoUrl,
+                        url = noWatermarkUrl,
                         thumbUrl = coverUrl,
                         duration = aweme.optInt("duration"),
                         ext = "mp4"
@@ -241,7 +268,8 @@ class ParseRepository(private val context: Context) {
                 "window\\.__RENDER_DATA__\\s*=\\s*['\"](.+?)['\"];".toRegex(),
                 "window\\.__RENDER_DATA__\\s*=\\s*(\\{.*?\\});".toRegex(RegexOption.DOT_MATCHES_ALL),
                 "window\\.__INITIAL_STATE__\\s*=\\s*(\\{.*?\\});".toRegex(RegexOption.DOT_MATCHES_ALL),
-                "_ROUTER_DATA\"[^=]*=\\s*(\\{.*?\\})</script>".toRegex(RegexOption.DOT_MATCHES_ALL)
+                "window\\._ROUTER_DATA\\s*=\\s*(\\{.*?\\})</script>".toRegex(RegexOption.DOT_MATCHES_ALL),
+                "window\\._SSR_DATA\\s*=\\s*(\\{.*?\\});".toRegex(RegexOption.DOT_MATCHES_ALL)
             )
 
             for (pattern in patterns) {
