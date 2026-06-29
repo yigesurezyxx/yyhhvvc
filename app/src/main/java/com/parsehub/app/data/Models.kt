@@ -1,27 +1,28 @@
 package com.parsehub.app.data
 
 data class MediaInfo(
-    val type: String,
-    val url: String?,
-    val thumbUrl: String?,
-    val width: Int?,
-    val height: Int?,
-    val duration: Int?,
-    val size: Long?,
-    val ext: String?,
+    val type: String = "image",
+    val url: String? = null,
+    val thumbUrl: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val duration: Int? = null,
+    val size: Long? = null,
+    val ext: String? = "jpg",
     val localPath: String? = null
 )
 
 data class ParseResult(
-    val platform: String?,
-    val type: String?,
-    val title: String,
-    val content: String,
-    val rawUrl: String?,
-    val author: String?,
-    val avatar: String?,
-    val media: List<MediaInfo>,
-    val error: String? = null
+    val platform: String? = null,
+    val type: String? = null,
+    val title: String = "",
+    val content: String = "",
+    val rawUrl: String? = null,
+    val author: String? = null,
+    val avatar: String? = null,
+    val media: List<MediaInfo> = emptyList(),
+    val error: String? = null,
+    val markdownContent: String? = null
 ) {
     val isSuccess: Boolean get() = error == null
     val hasMedia: Boolean get() = media.isNotEmpty()
