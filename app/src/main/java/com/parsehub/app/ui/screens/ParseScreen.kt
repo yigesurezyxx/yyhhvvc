@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -28,10 +29,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.parsehub.app.data.MediaInfo
 import com.parsehub.app.data.ParseRepository
 import com.parsehub.app.data.ParseResult
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,7 +60,11 @@ fun ParseScreen() {
     ) { permissions ->
         val allGranted = permissions.entries.all { it.value }
         if (allGranted) {
-            downloadAndSave(parseResult)
+            downloadAndSave(parseResult, scope, context,
+                onStatus = { downloadStatus = it },
+                onSuccess = { downloadSuccess = it },
+                onLoading = { isDownloading = it }
+            )
         }
     }
 
@@ -82,14 +89,6 @@ fun ParseScreen() {
                     ParseRepository.getInstance(context).parse(url.trim())
                 } catch (e: Exception) {
                     ParseResult(
-                        platform = null,
-                        type = null,
-                        title = "",
-                        content = "",
-                        rawUrl = null,
-                        author = null,
-                        avatar = null,
-                        media = emptyList(),
                         error = e.message ?: "解析失败"
                     )
                 }
@@ -99,47 +98,6 @@ fun ParseScreen() {
             if (result.error != null) {
                 errorMessage = result.error
             }
-        }
-    }
-
-    fun downloadAndSave(result: ParseResult?) {
-        if (result == null || !result.hasMedia) return
-        isDownloading = true
-        downloadStatus = "下载中..."
-        downloadSuccess = false
-
-        scope.launch {
-            try {
-                var savedCount = 0
-                var totalCount = result.media.size
-
-                for ((index, media) in result.media.withIndex()) {
-                    downloadStatus = "下载中 (${index + 1}/$totalCount)..."
-
-                    val localPath = withContext(Dispatchers.IO) {
-                        ParseRepository.getInstance(context).downloadMedia(media)
-                    }
-
-                    if (localPath != null) {
-                        val file = File(localPath)
-                        if (file.exists()) {
-                            val saved = ParseRepository.getInstance(context)
-                                .saveToGallery(file, media.type)
-                            if (saved) savedCount++
-                        }
-                    }
-                }
-
-                downloadSuccess = savedCount > 0
-                downloadStatus = if (savedCount > 0) {
-                    "已保存 $savedCount 个文件到相册"
-                } else {
-                    "保存失败"
-                }
-            } catch (e: Exception) {
-                downloadStatus = "下载失败: ${e.message}"
-            }
-            isDownloading = false
         }
     }
 
@@ -336,7 +294,7 @@ fun ParseScreen() {
                             Text(
                                 text = status,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (downloadSuccess) Color(0xFF4CAF50) 
+                                color = if (downloadSuccess) Color(0xFF4CAF50)
                                         else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -348,13 +306,61 @@ fun ParseScreen() {
         if (!isParsing && parseResult == null && errorMessage == null) {
             Spacer(modifier = Modifier.height(60.dp))
             Text(
-                text = "✨ 支持 16+ 平台\n抖音 · B站 · YouTube · 小红书\nTwitter · 微博 · 贴吧 · 快手",
+                text = "✨ 支持平台\n抖音 · B站 · YouTube · 小红书\nTwitter · 微博 · 贴吧 · 快手",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = androidx.compose.ui.unit.sp(22.sp.value)
+                lineHeight = 22.sp
             )
         }
+    }
+}
+
+private fun downloadAndSave(
+    result: ParseResult?,
+    scope: CoroutineScope,
+    context: Context,
+    onStatus: (String) -> Unit,
+    onSuccess: (Boolean) -> Unit,
+    onLoading: (Boolean) -> Unit
+) {
+    if (result == null || !result.hasMedia) return
+    onLoading(true)
+    onStatus("下载中...")
+    onSuccess(false)
+
+    scope.launch {
+        try {
+            var savedCount = 0
+            val totalCount = result.media.size
+
+            for ((index, media) in result.media.withIndex()) {
+                onStatus("下载中 (${index + 1}/$totalCount)...")
+
+                val localPath = withContext(Dispatchers.IO) {
+                    ParseRepository.getInstance(context).downloadMedia(media)
+                }
+
+                if (localPath != null) {
+                    val file = File(localPath)
+                    if (file.exists()) {
+                        val saved = ParseRepository.getInstance(context)
+                            .saveToGallery(file, media.type)
+                        if (saved) savedCount++
+                    }
+                }
+            }
+
+            onSuccess(savedCount > 0)
+            onStatus(if (savedCount > 0) {
+                "已保存 $savedCount 个文件到相册"
+            } else {
+                "保存失败"
+            })
+        } catch (e: Exception) {
+            onStatus("下载失败: ${e.message}")
+        }
+        onLoading(false)
     }
 }
 
@@ -429,7 +435,7 @@ fun SingleMedia(media: MediaInfo) {
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text("▶", color = Color.White, fontSize = androidx.compose.ui.unit.sp(24.sp.value))
+                Text("▶", color = Color.White, fontSize = 24.sp)
             }
         }
     }
@@ -464,14 +470,14 @@ fun MediaThumbnail(media: MediaInfo) {
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text("▶", color = Color.White, fontSize = androidx.compose.ui.unit.sp(16.sp.value))
+                Text("▶", color = Color.White, fontSize = 16.sp)
             }
         }
     }
 }
 
 private fun isVideoType(type: String): Boolean {
-    return type.contains("Video", ignoreCase = true) || 
+    return type.contains("Video", ignoreCase = true) ||
            type.contains("Live", ignoreCase = true) ||
            type.contains("video", ignoreCase = true)
 }
