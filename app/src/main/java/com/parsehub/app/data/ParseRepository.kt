@@ -401,10 +401,271 @@ class ParseRepository(private val context: Context) {
     }
 
     private fun parseXiaohongshu(url: String): ParseResult {
+        val realUrl = safeGetFinalUrl(url, mobileUA) ?: url
+        Log.d(TAG, "小红书真实URL: $realUrl")
+
+        val noteId = extractNoteId(realUrl)
+        Log.d(TAG, "小红书笔记ID: $noteId")
+
+        val html = safeFetchHtml(realUrl, mapOf(
+            "User-Agent" to mobileUA,
+            "Accept-Language" to "zh-CN,zh;q=0.9"
+        )) ?: return ParseResult(
+            platform = "小红书",
+            error = "无法加载小红书页面"
+        )
+
+        val initialState = extractInitialState(html)
+        if (initialState == null) {
+            Log.d(TAG, "未找到 __INITIAL_STATE__")
+            return ParseResult(
+                platform = "小红书",
+                error = "小红书解析失败，可能需要登录或链接已失效"
+            )
+        }
+
+        return try {
+            val note = initialState.optJSONObject("note")
+            val noteDetailMap = note?.optJSONObject("noteDetailMap")
+
+            var targetNote: JSONObject? = null
+
+            // 如果有 noteId，直接从 map 中找
+            if (noteId != null && noteDetailMap != null) {
+                val noteDetail = noteDetailMap.optJSONObject(noteId)
+                if (noteDetail != null) {
+                    targetNote = noteDetail.optJSONObject("note")
+                }
+            }
+
+            // 如果没找到，遍历 map 找第一个
+            if (targetNote == null && noteDetailMap != null) {
+                val keys = noteDetailMap.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val detail = noteDetailMap.optJSONObject(key)
+                    val n = detail?.optJSONObject("note")
+                    if (n != null) {
+                        targetNote = n
+                        break
+                    }
+                }
+            }
+
+            // 如果还是没有，从推荐流的第一条里拿（首页时的 fallback）
+            if (targetNote == null) {
+                val homeFeed = initialState.optJSONObject("home")
+                    ?: initialState.optJSONObject("feeds")
+                val feeds = homeFeed?.optJSONArray("feeds")
+                    ?: homeFeed?.optJSONArray("feedList")
+                if (feeds != null && feeds.length() > 0) {
+                    val firstFeed = feeds.getJSONObject(0)
+                    val noteCard = firstFeed.optJSONObject("noteCard")
+                        ?: firstFeed.optJSONObject("note_card")
+                    if (noteCard != null) {
+                        targetNote = noteCard
+                    }
+                }
+            }
+
+            if (targetNote == null) {
+                ParseResult(
+                    platform = "小红书",
+                    error = "未找到笔记内容，可能链接已失效或需要登录"
+                )
+            } else {
+                parseXhsNote(targetNote)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "小红书解析失败", e)
+            ParseResult(
+                platform = "小红书",
+                error = "解析出错: ${e.message}"
+            )
+        }
+    }
+
+    private fun parseXhsNote(note: JSONObject): ParseResult {
+        val title = note.optString("displayTitle", "")
+            .ifEmpty { note.optString("title", "") }
+        val desc = note.optString("desc", "")
+            .ifEmpty { note.optString("description", "") }
+
+        val user = note.optJSONObject("user")
+        val author = user?.optString("nickname", "")
+            ?: user?.optString("nickName", "")
+
+        val mediaList = mutableListOf<MediaInfo>()
+
+        // 图片笔记
+        val imageList = note.optJSONArray("imageList")
+            ?: note.optJSONArray("image_list")
+            ?: note.optJSONArray("images")
+
+        if (imageList != null && imageList.length() > 0) {
+            for (i in 0 until imageList.length()) {
+                val img = imageList.optJSONObject(i) ?: continue
+                val infoList = img.optJSONArray("infoList")
+                    ?: img.optJSONArray("info_list")
+
+                var imgUrl: String? = null
+                var thumbUrl: String? = null
+
+                if (infoList != null && infoList.length() > 0) {
+                    for (j in 0 until infoList.length()) {
+                        val info = infoList.optJSONObject(j) ?: continue
+                        val url = info.optString("url", "")
+                        if (url.isNotEmpty()) {
+                            if (imgUrl == null) imgUrl = url
+                            thumbUrl = url
+                        }
+                    }
+                }
+
+                // 备用：urlPre / urlDefault
+                if (imgUrl.isNullOrEmpty()) {
+                    val urlPre = img.optString("urlPre", "")
+                    val urlDefault = img.optString("urlDefault", "")
+                    val url = img.optString("url", "")
+                    imgUrl = when {
+                        urlPre.isNotEmpty() -> urlPre
+                        urlDefault.isNotEmpty() -> urlDefault
+                        url.isNotEmpty() -> url
+                        else -> null
+                    }
+                    thumbUrl = imgUrl
+                }
+
+                if (!imgUrl.isNullOrEmpty()) {
+                    mediaList.add(
+                        MediaInfo(
+                            type = "image",
+                            url = imgUrl,
+                            thumbUrl = thumbUrl ?: imgUrl,
+                            width = img.optInt("width"),
+                            height = img.optInt("height"),
+                            ext = "jpg"
+                        )
+                    )
+                }
+            }
+        }
+
+        // 视频笔记
+        val video = note.optJSONObject("video")
+            ?: note.optJSONObject("video_info")
+        if (video != null) {
+            val media = video.optJSONObject("media")
+            var videoUrl = media?.optJSONObject("stream")
+                ?.optJSONObject("h264")
+                ?.optJSONArray("master_url")
+                ?.optString(0, "")
+
+            if (videoUrl.isNullOrEmpty()) {
+                val v = video.optString("url", "")
+                val v2 = video.optString("video_url", "")
+                videoUrl = when {
+                    v.isNotEmpty() -> v
+                    v2.isNotEmpty() -> v2
+                    else -> null
+                }
+            }
+
+            val cover = video.optJSONObject("cover")
+            val coverUrl = cover?.let {
+                val u = it.optString("url", "")
+                val ud = it.optString("urlDefault", "")
+                val up = it.optString("urlPre", "")
+                when {
+                    u.isNotEmpty() -> u
+                    ud.isNotEmpty() -> ud
+                    up.isNotEmpty() -> up
+                    else -> null
+                }
+            }
+
+            val duration = video.optJSONObject("capa")?.optInt("duration")
+
+            if (!videoUrl.isNullOrEmpty()) {
+                mediaList.add(
+                    MediaInfo(
+                        type = "video",
+                        url = videoUrl,
+                        thumbUrl = coverUrl,
+                        duration = duration,
+                        ext = "mp4"
+                    )
+                )
+            }
+        }
+
+        // 如果没有找到媒体，但有 cover，就把 cover 当缩略图
+        if (mediaList.isEmpty()) {
+            val cover = note.optJSONObject("cover")
+            val coverUrl = cover?.let {
+                val ud = it.optString("urlDefault", "")
+                val up = it.optString("urlPre", "")
+                when {
+                    ud.isNotEmpty() -> ud
+                    up.isNotEmpty() -> up
+                    else -> null
+                }
+            }
+            if (!coverUrl.isNullOrEmpty()) {
+                mediaList.add(
+                    MediaInfo(
+                        type = "image",
+                        url = coverUrl,
+                        thumbUrl = coverUrl,
+                        ext = "jpg"
+                    )
+                )
+            }
+        }
+
         return ParseResult(
             platform = "小红书",
-            error = "小红书解析暂不支持"
+            type = if (video != null) "video" else "image",
+            title = title,
+            content = desc,
+            author = author,
+            media = mediaList,
+            error = if (mediaList.isEmpty()) "未找到可下载的媒体文件" else null
         )
+    }
+
+    private fun extractNoteId(url: String): String? {
+        val patterns = listOf(
+            "/explore/([a-zA-Z0-9]+)".toRegex(),
+            "/discovery/item/([a-zA-Z0-9]+)".toRegex(),
+            "note_id=([a-zA-Z0-9]+)".toRegex(),
+            "noteId=([a-zA-Z0-9]+)".toRegex(),
+            "/note/([a-zA-Z0-9]+)".toRegex(),
+            "xhslink\\.com/[^/]+/([a-zA-Z0-9]+)".toRegex()
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(url)
+            if (match != null) return match.groupValues[1]
+        }
+        return null
+    }
+
+    private fun extractInitialState(html: String): JSONObject? {
+        return try {
+            val pattern = "window\\.__INITIAL_STATE__\\s*=\\s*(\\{.*?\\})\\s*</script>".toRegex(RegexOption.DOT_MATCHES_ALL)
+            val match = pattern.find(html) ?: return null
+            var jsonStr = match.groupValues[1]
+
+            // 处理 undefined 和 NaN 等非标准 JSON 值
+            jsonStr = jsonStr.replace(":undefined", ":null")
+                .replace(" undefined", " null")
+                .replace(":NaN", ":null")
+
+            JSONObject(jsonStr)
+        } catch (e: Exception) {
+            Log.e(TAG, "解析 __INITIAL_STATE__ 失败", e)
+            null
+        }
     }
 
     private fun parseGeneric(url: String, platform: String): ParseResult {
