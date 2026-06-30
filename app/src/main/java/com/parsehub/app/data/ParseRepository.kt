@@ -1028,13 +1028,18 @@ class ParseRepository(private val context: Context) {
         queryParams: Map<String, String> = emptyMap()
     ): JSONObject? {
         return try {
-            val urlBuilder = okhttp3.HttpUrl.parse(url)?.newBuilder() ?: return null
-            for ((key, value) in queryParams) {
-                urlBuilder.addQueryParameter(key, value)
+            val urlWithParams = buildString {
+                append(url)
+                if (queryParams.isNotEmpty()) {
+                    append("?")
+                    append(queryParams.entries.joinToString("&") { (k, v) ->
+                        "${java.net.URLEncoder.encode(k, "UTF-8")}=${java.net.URLEncoder.encode(v, "UTF-8")}"
+                    })
+                }
             }
 
             val requestBuilder = Request.Builder()
-                .url(urlBuilder.build())
+                .url(urlWithParams)
                 .post(okhttp3.RequestBody.create(null, body))
 
             for ((key, value) in headers) {
