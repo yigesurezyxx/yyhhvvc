@@ -6,7 +6,10 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -40,28 +43,32 @@ class ParseRepository(private val context: Context) {
         "SUB=_2AkMR47Mlf8NxqwFRmfocxG_lbox2wg7EieKnv0L-JRMxHRl-yT9yqhFdtRB6OmOdyoia9pKPkqoHRRmSBA_WNPaHuybH"
 
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
-        try {
-            val extractedUrl = extractUrlFromText(url.trim())
-            val trimmedUrl = extractedUrl ?: url.trim()
-            val platform = detectPlatform(trimmedUrl)
-            Log.d(TAG, "检测平台: $platform, URL: $trimmedUrl")
+        withTimeoutOrNull(20_000L) {
+            try {
+                val extractedUrl = extractUrlFromText(url.trim())
+                val trimmedUrl = extractedUrl ?: url.trim()
+                val platform = detectPlatform(trimmedUrl)
+                Log.d(TAG, "检测平台: $platform, URL: $trimmedUrl")
 
-            val result = when (platform) {
-                "douyin" -> parseDouyin(trimmedUrl)
-                "bilibili" -> parseBilibili(trimmedUrl)
-                "kuaishou" -> parseKuaishou(trimmedUrl)
-                "weibo" -> parseWeibo(trimmedUrl)
-                "xiaohongshu" -> parseXiaohongshu(trimmedUrl)
-                else -> parseGeneric(trimmedUrl, platform)
+                val result = when (platform) {
+                    "douyin" -> parseDouyin(trimmedUrl)
+                    "bilibili" -> parseBilibili(trimmedUrl)
+                    "kuaishou" -> parseKuaishou(trimmedUrl)
+                    "weibo" -> parseWeibo(trimmedUrl)
+                    "xiaohongshu" -> parseXiaohongshu(trimmedUrl)
+                    else -> parseGeneric(trimmedUrl, platform)
+                }
+                Log.d(TAG, "解析完成: success=${result.isSuccess}, mediaCount=${result.media.size}")
+                result
+            } catch (e: Exception) {
+                Log.e(TAG, "解析异常", e)
+                ParseResult(
+                    error = "解析出错: ${e.javaClass.simpleName} - ${e.message}"
+                )
             }
-            Log.d(TAG, "解析完成: success=${result.isSuccess}, mediaCount=${result.media.size}")
-            result
-        } catch (e: Exception) {
-            Log.e(TAG, "解析异常", e)
-            ParseResult(
-                error = "解析出错: ${e.javaClass.simpleName} - ${e.message}"
-            )
-        }
+        } ?: ParseResult(
+            error = "解析超时，请稍后重试或检查网络"
+        )
     }
 
     private fun extractUrlFromText(text: String): String? {
@@ -86,26 +93,26 @@ class ParseRepository(private val context: Context) {
 
     // ========== 抖音解析 ==========
     private fun parseDouyin(url: String): ParseResult {
-        val videoIdFromUrl = extractDouyinId(url)
-        val realUrl = safeGetFinalUrl(url, mobileUA) ?: url
-        Log.d(TAG, "抖音真实URL: $realUrl")
+        // 优先从 URL 直接提取 ID（跳过 HEAD 请求）
+        var videoId = ParseUtils.extractDouyinId(url)
+        var realUrl = url
 
-        val videoId = videoIdFromUrl ?: extractDouyinId(realUrl)
+        if (videoId == null) {
+            // 短链需要重定向获取真实 URL
+            realUrl = safeGetFinalUrl(url, mobileUA) ?: url
+            Log.d(TAG, "抖音真实URL: $realUrl")
+            videoId = ParseUtils.extractDouyinId(realUrl)
+        }
+
         if (videoId == null) {
             return ParseResult(
                 platform = "抖音",
                 error = "无法从链接中提取视频ID，请确认是有效的抖音分享链接"
             )
         }
-        Log.d(TAG, "抖音视频ID: $videoId")
+        Log.d(TAG, "抖音视频ID: $videoId, 跳过HEAD: ${url != realUrl}")
 
-        try {
-            val result = parseDouyinByWeb(realUrl)
-            if (result != null && result.isSuccess) return result
-        } catch (e: Exception) {
-            Log.e(TAG, "抖音网页解析失败", e)
-        }
-
+        // 优先走 API（快，1 次请求）
         try {
             val apiUrl = "https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=$videoId"
             val json = safeFetchJson(apiUrl, mapOf(
@@ -123,6 +130,14 @@ class ParseRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "抖音 API 解析失败", e)
+        }
+
+        // API 失败时回退到网页解析
+        try {
+            val result = parseDouyinByWeb(realUrl)
+            if (result != null && result.isSuccess) return result
+        } catch (e: Exception) {
+            Log.e(TAG, "抖音网页解析失败", e)
         }
 
         return ParseResult(
@@ -282,12 +297,12 @@ class ParseRepository(private val context: Context) {
     }
 
     // ========== B站解析 ==========
-    private fun parseBilibili(url: String): ParseResult {
-        var bvid = extractBvid(url)
+    private suspend fun parseBilibili(url: String): ParseResult {
+        var bvid = ParseUtils.extractBvid(url)
 
         if (bvid == null) {
             val realUrl = safeGetFinalUrl(url, desktopUA) ?: url
-            bvid = extractBvid(realUrl)
+            bvid = ParseUtils.extractBvid(realUrl)
         }
 
         if (bvid == null) {
@@ -432,29 +447,8 @@ class ParseRepository(private val context: Context) {
         }
     }
 
-    private fun getWeiboId(url: String): String? {
-        val statusPattern = "/status/([^/?#]+)".toRegex()
-        val match = statusPattern.find(url)
-        if (match != null) return match.groupValues[1]
-
-        val lastSegment = url.split("/").lastOrNull()?.split("?")?.firstOrNull() ?: return null
-
-        if (isWeiboTv(url) && lastSegment.length == 21) {
-            return lastSegment
-        }
-
-        if (lastSegment.all { it.isDigit() } || lastSegment.length == 9) {
-            return lastSegment
-        }
-
-        val fid = getFidFromUrl(url)
-        if (fid != null) return fid
-
-        return null
-    }
-
     private fun parseWeiboStatus(url: String): ParseResult {
-        val bid = getWeiboId(url) ?: return ParseResult(
+        val bid = ParseUtils.getWeiboId(url) ?: return ParseResult(
             platform = "微博",
             error = "无法从链接中提取微博ID"
         )
@@ -648,7 +642,7 @@ class ParseRepository(private val context: Context) {
     }
 
     private fun parseWeiboTv(url: String, oidOverride: String? = null): ParseResult {
-        val oid = oidOverride ?: getWeiboId(url) ?: return ParseResult(
+        val oid = oidOverride ?: ParseUtils.getWeiboId(url) ?: return ParseResult(
             platform = "微博",
             error = "无法提取微博视频 ID"
         )
@@ -734,7 +728,7 @@ class ParseRepository(private val context: Context) {
             )
         }
 
-        val initialState = extractInitialState(html)
+        val initialState = ParseUtils.extractInitialState(html)
         if (initialState == null) {
             Log.d(TAG, "未找到 __INITIAL_STATE__")
             return ParseResult(
@@ -818,7 +812,7 @@ class ParseRepository(private val context: Context) {
             var height = 0
 
             if (stream != null) {
-                val selectedStream = selectXhsStream(stream)
+                val selectedStream = ParseUtils.selectXhsStream(stream)
                 if (selectedStream != null) {
                     videoUrl = selectedStream.optString("masterUrl", "")
                         .ifEmpty { selectedStream.optString("master_url", "") }
@@ -873,7 +867,7 @@ class ParseRepository(private val context: Context) {
                         val stream = img.optJSONObject("stream")
                         var liveVideoUrl: String? = null
                         if (stream != null) {
-                            val selected = selectXhsStream(stream)
+                            val selected = ParseUtils.selectXhsStream(stream)
                             liveVideoUrl = selected?.optString("masterUrl", "")
                                 ?.ifEmpty { selected.optString("master_url", "") }
                         }
@@ -914,44 +908,6 @@ class ParseRepository(private val context: Context) {
         )
     }
 
-    private fun selectXhsStream(stream: JSONObject): JSONObject? {
-        val codecs = listOf("h264", "av1", "h265", "h266")
-        for (codec in codecs) {
-            val codecObj = stream.optJSONObject(codec)
-            if (codecObj != null) {
-                val masterUrl = codecObj.optString("masterUrl", "")
-                    .ifEmpty { codecObj.optString("master_url", "") }
-                if (masterUrl.isNotEmpty()) return codecObj
-
-                val arr = codecObj.optJSONArray("master_url")
-                    ?: codecObj.optJSONArray("masterUrl")
-                if (arr != null && arr.length() > 0) {
-                    return codecObj
-                }
-            }
-        }
-        return null
-    }
-
-    private fun extractInitialState(html: String): JSONObject? {
-        return try {
-            val pattern = "window\\.__INITIAL_STATE__\\s*=\\s*(.+?)</script>".toRegex(RegexOption.DOT_MATCHES_ALL)
-            val match = pattern.find(html) ?: return null
-            var jsonStr = match.groupValues[1].trim()
-            if (jsonStr.endsWith(";")) {
-                jsonStr = jsonStr.dropLast(1)
-            }
-
-            jsonStr = jsonStr.replace(Regex("\\bundefined\\b"), "null")
-                .replace(Regex("\\bNaN\\b"), "null")
-
-            JSONObject(jsonStr)
-        } catch (e: Exception) {
-            Log.e(TAG, "解析 __INITIAL_STATE__ 失败", e)
-            null
-        }
-    }
-
     // ========== 通用/其他平台 ==========
     private fun parseGeneric(url: String, platform: String): ParseResult {
         val platformName = when (platform) {
@@ -983,31 +939,6 @@ class ParseRepository(private val context: Context) {
             Log.e(TAG, "获取重定向 URL 失败: ${e.message}")
             null
         }
-    }
-
-    private fun extractDouyinId(url: String): String? {
-        val patterns = listOf(
-            "/video/(\\d+)".toRegex(),
-            "/note/(\\d+)".toRegex(),
-            "aweme_id=(\\d+)".toRegex(),
-            "itemId=(\\d+)".toRegex(),
-            "video_id=(\\d+)".toRegex(),
-            "/share/video/(\\d+)".toRegex(),
-            "/share/note/(\\d+)".toRegex(),
-            "douyin\\.com/video/(\\d+)".toRegex(),
-            "iesdouyin\\.com/share/video/(\\d+)".toRegex()
-        )
-        for (pattern in patterns) {
-            val match = pattern.find(url)
-            if (match != null) return match.groupValues[1]
-        }
-        return null
-    }
-
-    private fun extractBvid(url: String): String? {
-        val pattern = "(BV[0-9A-Za-z]{10})".toRegex()
-        val match = pattern.find(url)
-        return match?.groupValues?.get(1)
     }
 
     private fun safeFetchHtml(url: String, headers: Map<String, String> = emptyMap()): String? {
