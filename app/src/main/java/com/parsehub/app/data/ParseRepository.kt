@@ -53,7 +53,7 @@ class ParseRepository(private val context: Context) {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
     private val desktopUA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
     private val weiboSubCookie =
         "SUB=_2AkMR47Mlf8NxqwFRmfocxG_lbox2wg7EieKnv0L-JRMxHRl-yT9yqhFdtRB6OmOdyoia9pKPkqoHRRmSBA_WNPaHuybH"
@@ -721,95 +721,107 @@ class ParseRepository(private val context: Context) {
     }
 
     // ========== 小红书解析 ==========
+    // 完全复刻 parse_hub_bot (z-mio/ParseHub) 的实现逻辑
+    // 关键：HTML 请求不发任何自定义头（和原项目一致）
     private fun parseXiaohongshu(url: String): ParseResult {
-        // 提示缺少 xsec_token 的链接可能无法解析
-        if (!ParseUtils.hasXsecToken(url) && !url.contains("xhslink")) {
-            Log.w(TAG, "小红书链接缺少 xsec_token，解析可能失败")
+        // 1. 如果是短链(xhslink)，先 follow redirect 获取真实 URL（用桌面 UA）
+        val realUrl = if (url.contains("xhslink")) {
+            safeGetFinalUrl(url, desktopUA) ?: url
+        } else {
+            url
         }
+        Log.d(TAG, "小红书URL: $url -> $realUrl")
 
-        val xhsHeaders = mapOf(
-            "User-Agent" to mobileUA,
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language" to "zh-CN,zh;q=0.9",
-            "Referer" to "https://www.xiaohongshu.com/",
-            "Cache-Control" to "no-cache"
+        // 2. 直接 GET HTML，不发任何特殊头（和 parse_hub_bot 的 __fetch_html 一致）
+        //    parse_hub_bot 用 httpx 默认头，不加 UA/Referer/Accept
+        //    httpx 默认发 "Accept: */*"，OkHttp 默认不发，补上以对齐
+        val html = safeFetchHtml(realUrl, mapOf("Accept" to "*/*")) ?: return ParseResult(
+            platform = "小红书",
+            error = "无法加载小红书页面"
         )
-        val htmlResult = safeFetchHtmlWithFinalUrl(url, xhsHeaders)
-        val html = htmlResult?.first
-        val realUrl = htmlResult?.second ?: url
+        Log.d(TAG, "小红书HTML长度: ${html.length}")
 
-        Log.d(TAG, "小红书真实URL: $realUrl, HTML长度: ${html?.length ?: 0}")
+        // 3. 提取 window.__INITIAL_STATE__（和 parse_hub_bot 的 __extract_data 一致）
+        val initialState = extractXhsInitialState(html) ?: return ParseResult(
+            platform = "小红书",
+            error = "小红书解析失败，可能需要登录或链接已失效"
+        )
 
-        if (html == null) {
-            return ParseResult(
-                platform = "小红书",
-                error = "无法加载小红书页面，可能是网络问题或被限制访问"
-            )
-        }
-
-        // 检测是否被重定向到登录页
-        if (html.contains("login") && html.length < 5000 && !html.contains("__INITIAL_STATE__")) {
-            return ParseResult(
-                platform = "小红书",
-                error = "小红书要求登录，请尝试从App分享完整链接（含xsec_token）"
-            )
-        }
-
-        val initialState = ParseUtils.extractInitialState(html)
-        if (initialState == null) {
-            Log.d(TAG, "未找到 __INITIAL_STATE__")
-            return ParseResult(
-                platform = "小红书",
-                error = "小红书解析失败，可能需要登录或链接已失效"
-            )
-        }
-
+        // 4. 解析笔记（和 parse_hub_bot 的 __parse 一致）
         return try {
-            val noteObj = initialState.optJSONObject("note")
-            if (noteObj == null) {
-                ParseResult(
+            val noteSection = initialState.optJSONObject("note")
+            if (noteSection == null) {
+                return ParseResult(
                     platform = "小红书",
                     error = "该笔记需要登录后查看，或链接已失效"
                 )
-            } else {
-                val firstNoteId = noteObj.optString("firstNoteId", "")
-                val noteDetailMap = noteObj.optJSONObject("noteDetailMap")
-
-                var targetNote: JSONObject? = null
-
-                if (firstNoteId.isNotEmpty() && noteDetailMap != null) {
-                    val detail = noteDetailMap.optJSONObject(firstNoteId)
-                    targetNote = detail?.optJSONObject("note")
-                }
-
-                if (targetNote == null && noteDetailMap != null) {
-                    val keys = noteDetailMap.keys()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
-                        val detail = noteDetailMap.optJSONObject(key)
-                        val n = detail?.optJSONObject("note")
-                        if (n != null) {
-                            targetNote = n
-                            break
-                        }
-                    }
-                }
-
-                if (targetNote == null) {
-                    ParseResult(
-                        platform = "小红书",
-                        error = "未找到笔记内容，可能需要登录后查看"
-                    )
-                } else {
-                    parseXhsNote(targetNote)
-                }
             }
+
+            val firstNoteId = noteSection.optString("firstNoteId", "")
+            val noteDetailMap = noteSection.optJSONObject("noteDetailMap")
+
+            if (firstNoteId.isEmpty() || noteDetailMap == null) {
+                return ParseResult(
+                    platform = "小红书",
+                    error = "未获取到内容，该帖子可能需要登录后查看"
+                )
+            }
+
+            val detail = noteDetailMap.optJSONObject(firstNoteId)
+            val note = detail?.optJSONObject("note")
+            if (note == null) {
+                return ParseResult(
+                    platform = "小红书",
+                    error = "未获取到内容，该帖子可能需要登录后查看"
+                )
+            }
+
+            parseXhsNote(note)
         } catch (e: Exception) {
             Log.e(TAG, "小红书解析失败", e)
             ParseResult(
                 platform = "小红书",
                 error = "解析出错: ${e.message}"
             )
+        }
+    }
+
+    /**
+     * 提取 window.__INITIAL_STATE__ 的 JSON
+     * 对齐 parse_hub_bot 的 __extract_data：
+     *   1. 找 <script> 标签，内容以 window.__INITIAL_STATE__ 开头
+     *   2. 去掉 "window.__INITIAL_STATE__=" 前缀
+     *   3. 替换 undefined -> null
+     *   4. json.loads
+     */
+    private fun extractXhsInitialState(html: String): JSONObject? {
+        return try {
+            // 找到所有 <script> 标签中内容以 window.__INITIAL_STATE__ 开头的
+            val marker = "window.__INITIAL_STATE__"
+            val markerIdx = html.indexOf(marker)
+            if (markerIdx == -1) return null
+
+            // 找到这个 script 标签的结束 </script>
+            val endIdx = html.indexOf("</script>", markerIdx)
+            if (endIdx == -1) return null
+
+            // 取 script 内容，去掉 "window.__INITIAL_STATE__=" 前缀
+            var jsonStr = html.substring(markerIdx, endIdx)
+            // 去掉前缀
+            jsonStr = jsonStr.removePrefix(marker)
+            // 去掉可能的前导 =
+            if (jsonStr.startsWith("=")) jsonStr = jsonStr.substring(1)
+            jsonStr = jsonStr.trim()
+            // 去掉末尾分号
+            if (jsonStr.endsWith(";")) jsonStr = jsonStr.dropLast(1)
+
+            // 替换 undefined -> null（和 parse_hub_bot 一致）
+            jsonStr = jsonStr.replace(Regex("\\bundefined\\b"), "null")
+
+            JSONObject(jsonStr)
+        } catch (e: Exception) {
+            Log.e(TAG, "提取 __INITIAL_STATE__ 失败: ${e.message}")
+            null
         }
     }
 
@@ -953,10 +965,11 @@ class ParseRepository(private val context: Context) {
     // ========== 工具方法 ==========
     private fun safeGetFinalUrl(url: String, ua: String): String? {
         return try {
+            // 用 GET + follow_redirects（和 parse_hub_bot 的 get_raw_url 一致）
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", ua)
-                .head()
+                .get()
                 .build()
 
             client.newCall(request).execute().use { response ->
