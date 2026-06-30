@@ -114,7 +114,7 @@ abstract class BaseParser(
                 val keep = (isReserved && !(cleanAll && isAfterClean)) || (isAfterClean && !cleanAll)
                 if (keep) {
                     for (value in parsed.queryParameterValues(name)) {
-                        keepParams.add(name to value)
+                        if (value != null) keepParams.add(name to value)
                     }
                 }
             }
