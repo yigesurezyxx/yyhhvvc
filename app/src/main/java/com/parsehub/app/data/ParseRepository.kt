@@ -21,8 +21,9 @@ class ParseRepository(private val context: Context) {
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
@@ -382,11 +383,16 @@ class ParseRepository(private val context: Context) {
     // ========== 微博解析 ==========
     private fun parseWeibo(url: String): ParseResult {
         return try {
-            val resolvedUrl = resolveWeiboUrl(url)
-            Log.d(TAG, "微博解析后URL: $resolvedUrl")
+            val fid = getFidFromUrl(url)
+            val hasFid = fid != null
 
-            if (isWeiboTv(resolvedUrl)) {
-                parseWeiboTv(resolvedUrl)
+            val resolvedUrl = if (hasFid) url else resolveWeiboUrl(url)
+            Log.d(TAG, "微博URL: $resolvedUrl, fid: $fid")
+
+            val isTv = isWeiboTv(resolvedUrl) || hasFid
+
+            if (isTv) {
+                parseWeiboTv(resolvedUrl, fid)
             } else {
                 parseWeiboStatus(resolvedUrl)
             }
@@ -399,8 +405,16 @@ class ParseRepository(private val context: Context) {
         }
     }
 
+    private fun getFidFromUrl(url: String): String? {
+        val fidPattern = "fid=([^&]+)".toRegex()
+        val match = fidPattern.find(url) ?: return null
+        val fid = match.groupValues[1]
+        val parts = fid.split(":")
+        return if (parts.size >= 2) parts[1] else fid
+    }
+
     private fun isWeiboTv(url: String): Boolean {
-        return "/tv/show" in url
+        return "/tv/show" in url || "video.weibo.com/show" in url
     }
 
     private fun resolveWeiboUrl(url: String): String {
@@ -433,14 +447,8 @@ class ParseRepository(private val context: Context) {
             return lastSegment
         }
 
-        val fidPattern = "fid=([^&]+)".toRegex()
-        val fidMatch = fidPattern.find(url)
-        if (fidMatch != null) {
-            val fid = fidMatch.groupValues[1]
-            val parts = fid.split(":")
-            if (parts.size >= 2) return parts[1]
-            return fid
-        }
+        val fid = getFidFromUrl(url)
+        if (fid != null) return fid
 
         return null
     }
@@ -639,8 +647,8 @@ class ParseRepository(private val context: Context) {
         )
     }
 
-    private fun parseWeiboTv(url: String): ParseResult {
-        val oid = getWeiboId(url) ?: return ParseResult(
+    private fun parseWeiboTv(url: String, oidOverride: String? = null): ParseResult {
+        val oid = oidOverride ?: getWeiboId(url) ?: return ParseResult(
             platform = "微博",
             error = "无法提取微博视频 ID"
         )
@@ -709,16 +717,21 @@ class ParseRepository(private val context: Context) {
 
     // ========== 小红书解析 ==========
     private fun parseXiaohongshu(url: String): ParseResult {
-        val realUrl = safeGetFinalUrl(url, mobileUA) ?: url
-        Log.d(TAG, "小红书真实URL: $realUrl")
-
-        val html = safeFetchHtml(realUrl, mapOf(
+        val htmlResult = safeFetchHtmlWithFinalUrl(url, mapOf(
             "User-Agent" to mobileUA,
             "Accept-Language" to "zh-CN,zh;q=0.9"
-        )) ?: return ParseResult(
-            platform = "小红书",
-            error = "无法加载小红书页面"
-        )
+        ))
+        val html = htmlResult?.first
+        val realUrl = htmlResult?.second ?: url
+
+        Log.d(TAG, "小红书真实URL: $realUrl")
+
+        if (html == null) {
+            return ParseResult(
+                platform = "小红书",
+                error = "无法加载小红书页面"
+            )
+        }
 
         val initialState = extractInitialState(html)
         if (initialState == null) {
@@ -997,13 +1010,24 @@ class ParseRepository(private val context: Context) {
     }
 
     private fun safeFetchHtml(url: String, headers: Map<String, String> = emptyMap()): String? {
+        return safeFetchHtmlWithFinalUrl(url, headers)?.first
+    }
+
+    private fun safeFetchHtmlWithFinalUrl(
+        url: String,
+        headers: Map<String, String> = emptyMap()
+    ): Pair<String, String>? {
         return try {
             val requestBuilder = Request.Builder().url(url).get()
             for ((key, value) in headers) {
                 requestBuilder.header(key, value)
             }
             client.newCall(requestBuilder.build()).execute().use { response ->
-                if (response.isSuccessful) response.body?.string() else null
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: return null
+                    val finalUrl = response.request.url.toString()
+                    Pair(body, finalUrl)
+                } else null
             }
         } catch (e: Exception) {
             Log.e(TAG, "HTTP 请求失败: ${e.message}")
