@@ -27,12 +27,12 @@ class ParseRepository(private val context: Context) {
         private val store = mutableMapOf<String, List<okhttp3.Cookie>>()
 
         @Synchronized
-        override fun saveFromResponse(url: java.net.URL, cookies: List<okhttp3.Cookie>) {
+        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
             store[url.host] = (store[url.host] ?: emptyList()) + cookies
         }
 
         @Synchronized
-        override fun loadForRequest(url: java.net.URL): List<okhttp3.Cookie> {
+        override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> {
             return store[url.host] ?: emptyList()
         }
     }
