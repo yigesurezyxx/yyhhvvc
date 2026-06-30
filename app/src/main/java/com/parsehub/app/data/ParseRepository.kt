@@ -22,6 +22,21 @@ import java.util.concurrent.TimeUnit
 class ParseRepository(private val context: Context) {
     private val TAG = "ParseRepository"
 
+    // 内存级 CookieJar，自动管理重定向间的 cookie（XHS 反爬依赖 cookie）
+    private val cookieJar = object : okhttp3.CookieJar {
+        private val store = mutableMapOf<String, List<okhttp3.Cookie>>()
+
+        @Synchronized
+        override fun saveFromResponse(url: java.net.URL, cookies: List<okhttp3.Cookie>) {
+            store[url.host] = (store[url.host] ?: emptyList()) + cookies
+        }
+
+        @Synchronized
+        override fun loadForRequest(url: java.net.URL): List<okhttp3.Cookie> {
+            return store[url.host] ?: emptyList()
+        }
+    }
+
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -30,6 +45,7 @@ class ParseRepository(private val context: Context) {
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
+            .cookieJar(cookieJar)
             .build()
     }
 
@@ -45,7 +61,7 @@ class ParseRepository(private val context: Context) {
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
         withTimeoutOrNull(20_000L) {
             try {
-                val extractedUrl = extractUrlFromText(url.trim())
+                val extractedUrl = ParseUtils.extractUrlFromText(url.trim())
                 val trimmedUrl = extractedUrl ?: url.trim()
                 val platform = detectPlatform(trimmedUrl)
                 Log.d(TAG, "检测平台: $platform, URL: $trimmedUrl")
@@ -69,12 +85,6 @@ class ParseRepository(private val context: Context) {
         } ?: ParseResult(
             error = "解析超时，请稍后重试或检查网络"
         )
-    }
-
-    private fun extractUrlFromText(text: String): String? {
-        val urlPattern = "https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+".toRegex(RegexOption.IGNORE_CASE)
-        val match = urlPattern.find(text)
-        return match?.value
     }
 
     private fun detectPlatform(url: String): String {
@@ -712,19 +722,36 @@ class ParseRepository(private val context: Context) {
 
     // ========== 小红书解析 ==========
     private fun parseXiaohongshu(url: String): ParseResult {
-        val htmlResult = safeFetchHtmlWithFinalUrl(url, mapOf(
+        // 提示缺少 xsec_token 的链接可能无法解析
+        if (!ParseUtils.hasXsecToken(url) && !url.contains("xhslink")) {
+            Log.w(TAG, "小红书链接缺少 xsec_token，解析可能失败")
+        }
+
+        val xhsHeaders = mapOf(
             "User-Agent" to mobileUA,
-            "Accept-Language" to "zh-CN,zh;q=0.9"
-        ))
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "zh-CN,zh;q=0.9",
+            "Referer" to "https://www.xiaohongshu.com/",
+            "Cache-Control" to "no-cache"
+        )
+        val htmlResult = safeFetchHtmlWithFinalUrl(url, xhsHeaders)
         val html = htmlResult?.first
         val realUrl = htmlResult?.second ?: url
 
-        Log.d(TAG, "小红书真实URL: $realUrl")
+        Log.d(TAG, "小红书真实URL: $realUrl, HTML长度: ${html?.length ?: 0}")
 
         if (html == null) {
             return ParseResult(
                 platform = "小红书",
-                error = "无法加载小红书页面"
+                error = "无法加载小红书页面，可能是网络问题或被限制访问"
+            )
+        }
+
+        // 检测是否被重定向到登录页
+        if (html.contains("login") && html.length < 5000 && !html.contains("__INITIAL_STATE__")) {
+            return ParseResult(
+                platform = "小红书",
+                error = "小红书要求登录，请尝试从App分享完整链接（含xsec_token）"
             )
         }
 
@@ -955,11 +982,18 @@ class ParseRepository(private val context: Context) {
                 requestBuilder.header(key, value)
             }
             client.newCall(requestBuilder.build()).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string() ?: return null
-                    val finalUrl = response.request.url.toString()
+                val body = response.body?.string()
+                val finalUrl = response.request.url.toString()
+                if (response.isSuccessful && body != null) {
                     Pair(body, finalUrl)
-                } else null
+                } else {
+                    Log.e(TAG, "HTTP ${response.code} for $url, body长度: ${body?.length ?: 0}")
+                    // 对 3xx 重定向已由 OkHttp 自动处理，这里只到 4xx/5xx
+                    // 返回 body 给调用方判断是否是反爬页面
+                    if (body != null && body.isNotEmpty()) {
+                        Pair(body, finalUrl)
+                    } else null
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "HTTP 请求失败: ${e.message}")

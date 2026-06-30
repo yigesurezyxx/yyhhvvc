@@ -201,4 +201,56 @@ class ParseUtilsTest {
         val stream = JSONObject("""{}""")
         assertNull(ParseUtils.selectXhsStream(stream))
     }
+
+    // ========== extractUrlFromText ==========
+
+    @Test
+    fun extractUrlFromText_returnsUrl_fromShareText() {
+        val text = "小红书  2024-06-30 https://www.xiaohongshu.com/explore/abc123?xsec_token=xyz123 内容已复制"
+        val url = ParseUtils.extractUrlFromText(text)
+        assertNotNull(url)
+        assertTrue(url!!.contains("xsec_token=xyz123"))
+    }
+
+    @Test
+    fun extractUrlFromText_trimsTrailingPunctuation() {
+        val text = "看这个 https://www.xiaohongshu.com/explore/abc?xsec_token=xyz,"
+        val url = ParseUtils.extractUrlFromText(text)
+        assertNotNull(url)
+        assertFalse(url!!.endsWith(","))
+        assertTrue(url.contains("xsec_token=xyz"))
+    }
+
+    @Test
+    fun extractUrlFromText_returnsNull_whenNoUrl() {
+        val text = "这是一段没有链接的文字"
+        assertNull(ParseUtils.extractUrlFromText(text))
+    }
+
+    @Test
+    fun extractUrlFromText_handlesXhslinkShortUrl() {
+        val text = "https://xhslink.com/a/abc123"
+        val url = ParseUtils.extractUrlFromText(text)
+        assertEquals("https://xhslink.com/a/abc123", url)
+    }
+
+    // ========== hasXsecToken ==========
+
+    @Test
+    fun hasXsecToken_returnsTrue_whenTokenPresent() {
+        val url = "https://www.xiaohongshu.com/explore/abc?xsec_token=xyz123"
+        assertTrue(ParseUtils.hasXsecToken(url))
+    }
+
+    @Test
+    fun hasXsecToken_returnsFalse_whenTokenMissing() {
+        val url = "https://www.xiaohongshu.com/explore/abc"
+        assertFalse(ParseUtils.hasXsecToken(url))
+    }
+
+    @Test
+    fun hasXsecToken_returnsFalse_forXhslink() {
+        val url = "https://xhslink.com/a/abc123"
+        assertFalse(ParseUtils.hasXsecToken(url))
+    }
 }

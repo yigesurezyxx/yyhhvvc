@@ -117,4 +117,20 @@ object ParseUtils {
         }
         return null
     }
+
+    /**
+     * 从分享文本中提取 URL，去掉末尾可能混入的标点
+     */
+    fun extractUrlFromText(text: String): String? {
+        val urlPattern = "https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+".toRegex(RegexOption.IGNORE_CASE)
+        val match = urlPattern.find(text) ?: return null
+        return match.value.trimEnd(',', ')', ';', '.', '!', '?', ':', '\'')
+    }
+
+    /**
+     * 检查小红书 URL 是否包含 xsec_token
+     */
+    fun hasXsecToken(url: String): Boolean {
+        return "xsec_token=" in url
+    }
 }
