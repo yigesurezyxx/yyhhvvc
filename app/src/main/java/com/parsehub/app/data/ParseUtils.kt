@@ -68,9 +68,15 @@ object ParseUtils {
 
     /**
      * 从微博 URL 中提取状态 ID 或视频 OID
+     * 对齐 parse_hub_bot WeiboAPI.get_id_by_url
+     *
+     * 规则:
+     * 1. /status/{id} → id
+     * 2. fid={x}:{oid} → oid
+     * 3. path 最后一段: tv且长度21 → 返回; 否则 纯数字 或 长度==9(9位base62 bid) → 返回
      */
     fun getWeiboId(url: String): String? {
-        // 1. /status/xxx 格式
+        // 1. /status/xxx 格式（对齐 ^/status/([^/?#]+)）
         val statusPattern = "/status/([^/?#]+)".toRegex()
         statusPattern.find(url)?.let { return it.groupValues[1] }
 
@@ -79,18 +85,19 @@ object ParseUtils {
         fidPattern.find(url)?.let { match ->
             val fid = match.groupValues[1]
             val parts = fid.split(":")
-            if (parts.size >= 2) return parts[1]
-            return fid
+            return if (parts.size >= 2) parts[1] else fid
         }
 
-        // 3. 纯数字最后一段（如 /detail/5034567890123456）
-        val lastSegment = url.split("/").lastOrNull()?.split("?")?.firstOrNull()
-        if (lastSegment != null && lastSegment.isNotEmpty()) {
-            if (lastSegment.all { it.isDigit() } && lastSegment.length >= 9) {
-                return lastSegment
-            }
-        }
+        // 3. 取 path 最后一段（对齐 parse_hub_bot: parsed.path.split("/")[-1]）
+        val withoutQuery = url.substringBefore("?").substringBefore("#")
+        val lastSegment = withoutQuery.trimEnd('/').split("/").lastOrNull()
+        if (lastSegment.isNullOrEmpty()) return null
 
+        val isTv = "/tv/show" in url || "video.weibo.com/show" in url
+        // 对齐: if self.is_tv(url) and len(id_) == 21: return id_
+        if (isTv && lastSegment.length == 21) return lastSegment
+        // 对齐: if id_.isdigit() or len(id_) == 9: return id_
+        if (lastSegment.all { it.isDigit() } || lastSegment.length == 9) return lastSegment
         return null
     }
 

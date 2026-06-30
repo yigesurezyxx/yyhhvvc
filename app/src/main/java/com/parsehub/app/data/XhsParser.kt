@@ -52,17 +52,27 @@ class XhsParser(
     /**
      * 抓取 HTML — 对齐 parse_hub_bot 的 XHSAPI.__fetch_html
      * 不发任何自定义头，只发 httpx 默认的 Accept 和 User-Agent
+     *
+     * 关键: httpx 默认 follow_redirects=False，这里用独立 client 关闭重定向，
+     * 避免 OkHttp 跟随 XHS 反爬重定向链（每次 302 都是一次额外往返，是 20s 卡顿的主因之一）。
+     * getRawUrl 已处理 xhslink 短链重定向，fetchHtml 不应再重定向。
      */
     private fun fetchHtml(url: String): String? {
         return try {
+            val noRedirectClient = client.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+
             val request = Request.Builder()
                 .url(url)
                 .header("Accept", "*/*")
                 .header("User-Agent", HTTPX_DEFAULT_UA)
+                .header("Accept-Encoding", "gzip")
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            noRedirectClient.newCall(request).execute().use { response ->
                 Log.d(TAG, "HTTP ${response.code}, Content-Length: ${response.body?.contentLength()}")
                 if (response.isSuccessful) {
                     response.body?.string()

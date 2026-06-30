@@ -169,8 +169,30 @@ class ParseUtilsTest {
     }
 
     @Test
+    fun getWeiboId_returnsMid_fromUidMidUrl() {
+        // 用户反馈的失败案例: weibo.com/{uid}/{mid}（数字 mid）
+        val url = "https://weibo.com/6001863056/5315444644776304"
+        assertEquals("5315444644776304", ParseUtils.getWeiboId(url))
+    }
+
+    @Test
+    fun getWeiboId_returnsBid_fromUidBidUrl() {
+        // weibo.com/{uid}/{bid}（9 位 base62 bid，对齐 parse_hub_bot: len(id_) == 9）
+        val url = "https://weibo.com/6001863056/P1utKrD8m"
+        assertEquals("P1utKrD8m", ParseUtils.getWeiboId(url))
+    }
+
+    @Test
+    fun getWeiboId_returnsMid_fromUidMidUrl_withQuery() {
+        val url = "https://weibo.com/6001863056/5315444644776304?refer_flag=1001030103_"
+        assertEquals("5315444644776304", ParseUtils.getWeiboId(url))
+    }
+
+    @Test
     fun getWeiboId_returnsNull_fromInvalidUrl() {
-        val url = "https://www.example.com/something"
+        // 最后一段既非纯数字也非 9 位 base62 bid → null
+        // 注意: parse_hub_bot 的 get_id_by_url 对 9 位字符串会放行（靠平台匹配前置过滤）
+        val url = "https://www.example.com/about"
         assertNull(ParseUtils.getWeiboId(url))
     }
 

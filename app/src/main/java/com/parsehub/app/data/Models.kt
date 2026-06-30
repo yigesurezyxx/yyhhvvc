@@ -40,3 +40,12 @@ data class PlatformInfo(
     val id: String,
     val name: String
 )
+
+/**
+ * 解析阶段，用于 UI 进度展示
+ */
+enum class ParseStage(val label: String) {
+    DETECTING("正在检测平台..."),
+    FETCHING("正在抓取页面内容..."),
+    DONE("解析完成")
+}

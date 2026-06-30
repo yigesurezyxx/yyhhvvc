@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -39,7 +40,7 @@ class ParseRepository(private val context: Context) {
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
             .followRedirects(true)
@@ -58,14 +59,24 @@ class ParseRepository(private val context: Context) {
     private val weiboSubCookie =
         "SUB=_2AkMR47Mlf8NxqwFRmfocxG_lbox2wg7EieKnv0L-JRMxHRl-yT9yqhFdtRB6OmOdyoia9pKPkqoHRRmSBA_WNPaHuybH"
 
-    suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
+    /**
+     * 解析入口
+     * @param onProgress 进度回调，用于 UI 展示解析阶段（检测平台/抓取页面/提取媒体）
+     */
+    suspend fun parse(
+        url: String,
+        onProgress: ((ParseStage) -> Unit)? = null
+    ): ParseResult = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
         withTimeoutOrNull(20_000L) {
             try {
+                onProgress?.invoke(ParseStage.DETECTING)
                 val extractedUrl = ParseUtils.extractUrlFromText(url.trim())
                 val trimmedUrl = extractedUrl ?: url.trim()
                 val platform = detectPlatform(trimmedUrl)
                 Log.d(TAG, "检测平台: $platform, URL: $trimmedUrl")
 
+                onProgress?.invoke(ParseStage.FETCHING)
                 val result = when (platform) {
                     "douyin" -> parseDouyin(trimmedUrl)
                     "bilibili" -> parseBilibili(trimmedUrl)
@@ -74,7 +85,8 @@ class ParseRepository(private val context: Context) {
                     "xiaohongshu" -> XhsParser(client).parse(trimmedUrl)
                     else -> parseGeneric(trimmedUrl, platform)
                 }
-                Log.d(TAG, "解析完成: success=${result.isSuccess}, mediaCount=${result.media.size}")
+                onProgress?.invoke(ParseStage.DONE)
+                Log.d(TAG, "解析完成: success=${result.isSuccess}, mediaCount=${result.media.size}, 耗时=${System.currentTimeMillis() - startTime}ms")
                 result
             } catch (e: Exception) {
                 Log.e(TAG, "解析异常", e)
@@ -83,7 +95,7 @@ class ParseRepository(private val context: Context) {
                 )
             }
         } ?: ParseResult(
-            error = "解析超时，请稍后重试或检查网络"
+            error = "解析超时（已用时 ${System.currentTimeMillis() - startTime}ms），请稍后重试或检查网络"
         )
     }
 
@@ -408,14 +420,15 @@ class ParseRepository(private val context: Context) {
     // ========== 微博解析 ==========
     private fun parseWeibo(url: String): ParseResult {
         return try {
-            val fid = getFidFromUrl(url)
-            val hasFid = fid != null
+            // 对齐 parse_hub_bot WeiboAPI.parse:
+            // 1. resolve_url 只对 mapp.api.weibo.cn/fx/ 做重定向，其他原样返回
+            // 2. get_id_by_url 提取 id
+            // 3. is_tv ? tv_show : statuses_show
+            val resolvedUrl = resolveWeiboUrl(url)
+            val fid = getFidFromUrl(resolvedUrl)
+            Log.d(TAG, "微博URL: $url -> $resolvedUrl, fid: $fid")
 
-            val resolvedUrl = if (hasFid) url else resolveWeiboUrl(url)
-            Log.d(TAG, "微博URL: $resolvedUrl, fid: $fid")
-
-            val isTv = isWeiboTv(resolvedUrl) || hasFid
-
+            val isTv = isWeiboTv(resolvedUrl) || fid != null
             if (isTv) {
                 parseWeiboTv(resolvedUrl, fid)
             } else {
@@ -442,17 +455,30 @@ class ParseRepository(private val context: Context) {
         return "/tv/show" in url || "video.weibo.com/show" in url
     }
 
+    /**
+     * 对齐 parse_hub_bot WeiboAPI.resolve_url
+     * 只对 mapp.api.weibo.cn/fx/ 短链做重定向；
+     * weibo.com/{uid}/{mid} 普通链接原样返回（避免 HEAD/GET 请求把 URL 重定向到登录页导致 ID 提取失败）；
+     * video.weibo.com/show 用 fid 提取，不走这里。
+     */
     private fun resolveWeiboUrl(url: String): String {
+        val httpUrl = url.toHttpUrlOrNull() ?: return url
+        val needResolve =
+            httpUrl.host == "mapp.api.weibo.cn" && httpUrl.encodedPath.startsWith("/fx/")
+        if (!needResolve) return url
+
+        // 对齐: GET + follow_redirects=False, 取 Location 头
         return try {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", desktopUA)
-                .head()
+                .get()
                 .build()
-            client.newCall(request).execute().use { response ->
-                response.request.url.toString()
+            client.newBuilder().followRedirects(false).build().newCall(request).execute().use { response ->
+                response.header("Location") ?: url
             }
         } catch (e: Exception) {
+            Log.e(TAG, "微博短链重定向失败: ${e.message}")
             url
         }
     }
