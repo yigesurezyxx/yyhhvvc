@@ -105,51 +105,33 @@ abstract class BaseParser(
     private fun cleanUrlParams(url: String, cleanAll: Boolean): String {
         return try {
             val parsed = url.toHttpUrlOrNull() ?: return url
-            val queryParamNames = parsed.queryParameterNames.toMutableList()
+            val queryParamNames = parsed.queryParameterNames
 
-            val newQuery = StringBuilder()
+            val keepParams = mutableListOf<Pair<String, String>>()
             for (name in queryParamNames) {
                 val isReserved = name in reservedParameters
                 val isAfterClean = name in afterCleanParameters
-                // 保留条件：(保留参数 且 非全清模式的after_clean) 或 (after_clean 且 非全清)
                 val keep = (isReserved && !(cleanAll && isAfterClean)) || (isAfterClean && !cleanAll)
                 if (keep) {
-                    val values = parsed.queryParameterValues(name)
-                    for (value in values) {
-                        if (newQuery.isNotEmpty()) newQuery.append("&")
-                        newQuery.append(URLEncoder.encode(name, "UTF-8"))
-                        newString("=")
-                        newQuery.append(URLEncoder.encode(value, "UTF-8"))
+                    for (value in parsed.queryParameterValues(name)) {
+                        keepParams.add(name to value)
                     }
                 }
             }
 
-            val builder = parsed.newBuilder()
-            // 清除所有原有参数
-            for (name in queryParamNames) {
-                builder.removeAllQueryParameter(name)
-            }
-            // 添加保留的参数
-            if (newQuery.isNotEmpty()) {
-                for (pair in newQuery.toString().split("&")) {
-                    val idx = pair.indexOf("=")
-                    if (idx > 0) {
-                        builder.addQueryParameter(
-                            pair.substring(0, idx),
-                            pair.substring(idx + 1)
-                        )
-                    }
+            val base = url.substringBefore("?")
+            if (keepParams.isEmpty()) {
+                base
+            } else {
+                base + "?" + keepParams.joinToString("&") { (k, v) ->
+                    URLEncoder.encode(k, "UTF-8") + "=" + URLEncoder.encode(v, "UTF-8")
                 }
             }
-
-            builder.build().toString()
         } catch (e: Exception) {
             Log.e(TAG, "URL 参数清洗失败: ${e.message}")
             url
         }
     }
-
-    private fun StringBuilder.newString(s: String): StringBuilder = this.append(s)
 
     /**
      * 执行解析
