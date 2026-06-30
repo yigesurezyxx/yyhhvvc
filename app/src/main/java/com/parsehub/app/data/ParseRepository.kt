@@ -677,7 +677,8 @@ class ParseRepository(private val context: Context) {
 
         val coverImage = "https:${cpp.optString("cover_image", "")}"
         val duration = cpp.optInt("duration_time", 0)
-        val text = cpp.optString("text", "")
+        val rawText = cpp.optString("text", "")
+        val text = cleanWeiboText(rawText)
         val urls = cpp.optJSONObject("urls")
         val videoUrl = if (urls != null && urls.length() > 0) {
             val firstKey = urls.keys().next()
@@ -1088,18 +1089,40 @@ class ParseRepository(private val context: Context) {
     }
 
     // ========== 下载相关 ==========
+    private fun getRefererForUrl(url: String): String {
+        return when {
+            "xiaohongshu" in url || "xhslink" in url -> "https://www.xiaohongshu.com/"
+            "weibo" in url -> "https://weibo.com/"
+            "douyin" in url || "iesdouyin" in url -> "https://www.douyin.com/"
+            "kuaishou" in url || "gifshow" in url -> "https://www.kuaishou.com/"
+            else -> ""
+        }
+    }
+
+    private fun isXiaohongshuUrl(url: String): Boolean {
+        return "xiaohongshu" in url || "xhslink" in url
+    }
+
     suspend fun downloadMedia(
         media: MediaInfo,
+        referer: String? = null,
         onProgress: ((Int) -> Unit)? = null
     ): String? = withContext(Dispatchers.IO) {
         val url = media.url ?: return@withContext null
         try {
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url(url)
-                .header("User-Agent", desktopUA)
-                .header("Referer", "https://www.douyin.com/")
                 .get()
-                .build()
+
+            val autoReferer = referer ?: getRefererForUrl(url)
+            val autoUA = if (isXiaohongshuUrl(url)) mobileUA else desktopUA
+
+            requestBuilder.header("User-Agent", autoUA)
+            if (autoReferer.isNotEmpty()) {
+                requestBuilder.header("Referer", autoReferer)
+            }
+
+            val request = requestBuilder.build()
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
