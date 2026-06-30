@@ -1,7 +1,7 @@
 package com.parsehub.app.data
 
 import android.util.Log
-import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import java.net.URLEncoder
 
@@ -104,7 +104,7 @@ abstract class BaseParser(
      */
     private fun cleanUrlParams(url: String, cleanAll: Boolean): String {
         return try {
-            val parsed = HttpUrl.parse(url) ?: return url
+            val parsed = url.toHttpUrlOrNull() ?: return url
             val queryParamNames = parsed.queryParameterNames.toMutableList()
 
             val newQuery = StringBuilder()
