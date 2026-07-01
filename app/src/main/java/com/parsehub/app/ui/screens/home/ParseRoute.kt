@@ -32,7 +32,7 @@ import com.parsehub.app.ui.theme.ThemeManager
  * ParseScreen 零业务依赖,所有副作用集中在 Route 层。
  */
 @Composable
-fun ParseRoute() {
+fun ParseRoute(initialSharedUrl: String? = null) {
     val context = LocalContext.current
     val viewModel: ParseViewModel = viewModel(
         factory = viewModelFactory {
@@ -53,6 +53,13 @@ fun ParseRoute() {
         ThemeManager.Mode.DARK -> true
         ThemeManager.Mode.LIGHT -> false
         ThemeManager.Mode.SYSTEM -> isSystemInDarkTheme()
+    }
+
+    // 从分享菜单进入: 自动填入 URL
+    LaunchedEffect(initialSharedUrl) {
+        if (!initialSharedUrl.isNullOrBlank()) {
+            viewModel.dispatch(ParseIntent.UrlChanged(initialSharedUrl))
+        }
     }
 
     LaunchedEffect(Unit) {

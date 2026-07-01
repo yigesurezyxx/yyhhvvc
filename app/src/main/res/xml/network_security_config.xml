@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 默认: 拒绝明文 HTTP(Android 9+ 默认行为,澎湃OS严格执行) -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 白名单: 允许明文 HTTP 的域名(短链/老接口) -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 小红书短链(http://xhslink.com/...) -->
+        <domain includeSubdomains="true">xhslink.com</domain>
+        <domain includeSubdomains="true">xiaohongshu.com</domain>
+        <!-- 微博视频短链(http://video.weibo.com/... 或 http://t.cn/...) -->
+        <domain includeSubdomains="true">weibo.com</domain>
+        <domain includeSubdomains="true">weibo.cn</domain>
+        <domain includeSubdomains="true">t.cn</domain>
+        <!-- 抖音短链(http://v.douyin.com/...) -->
+        <domain includeSubdomains="true">douyin.com</domain>
+        <domain includeSubdomains="true">iesdouyin.com</domain>
+        <!-- B站短链(http://b23.tv/...) -->
+        <domain includeSubdomains="true">b23.tv</domain>
+        <domain includeSubdomains="true">bilibili.com</domain>
+    </domain-config>
+</network-security-config>
