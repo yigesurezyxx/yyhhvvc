@@ -1,15 +1,17 @@
 package com.parsehub.app.data
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
- * 历史记录入口(spec 7.3:委托 HistoryRepository,保持 IParseHistory 实现不变)
+ * 解析历史记录(最近 10 条)
  *
- * - MainActivity 调用 [init] 时构建 Room DB + Repository
- * - 其余方法全部委托给 [repo]
- * - HistoryItem data class 仍定义在此处(被 UI 层引用)
+ * 用 SharedPreferences 持久化存储,JSON 序列化。
+ * 同步操作(SharedPreferences 内存缓存),不会阻塞主线程,不会闪退。
  *
- * 注:旧 SharedPreferences 实现已废弃,数据不迁移(本轮为首次接入 Room)。
+ * 注:回退自 Room 版本。Room 的 runBlocking 在协程内导致闪退,
+ * SharedPreferences 同步读写更稳定,符合原版开源项目逻辑。
  */
 data class HistoryItem(
     val url: String,
@@ -19,29 +21,74 @@ data class HistoryItem(
 )
 
 object ParseHistory : IParseHistory {
+    private const val PREFS_NAME = "parse_history"
+    private const val KEY_HISTORY = "history_items"
+    private const val MAX_SIZE = 10
 
-    private var repo: IParseHistory? = null
+    private var appContext: Context? = null
 
     override fun init(context: Context) {
-        if (repo == null) {
-            synchronized(this) {
-                if (repo == null) {
-                    val dao = com.parsehub.app.data.history.HistoryDatabase
-                        .get(context).historyDao()
-                    repo = com.parsehub.app.data.history.HistoryRepository(dao)
-                }
-            }
-        }
+        if (appContext == null) appContext = context.applicationContext
     }
 
-    private fun delegate(): IParseHistory =
-        repo ?: error("ParseHistory 未初始化,请先调用 init(context)")
+    private fun ctx(): Context =
+        appContext ?: error("ParseHistory 未初始化,请先调用 init(context)")
 
-    override fun load(): List<HistoryItem> = delegate().load()
+    override fun load(): List<HistoryItem> {
+        val prefs = ctx().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val json = prefs.getString(KEY_HISTORY, "[]") ?: "[]"
+        val items = mutableListOf<HistoryItem>()
+        try {
+            val arr = JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                items.add(
+                    HistoryItem(
+                        url = obj.optString("url"),
+                        platform = obj.optString("platform"),
+                        title = obj.optString("title"),
+                        timestamp = obj.optLong("timestamp")
+                    )
+                )
+            }
+        } catch (_: Exception) {
+        }
+        return items
+    }
 
-    override fun add(item: HistoryItem) = delegate().add(item)
+    /** 新增一条记录(相同 URL 自动去重,最新的在最前) */
+    override fun add(item: HistoryItem) {
+        val current = load().toMutableList()
+        current.removeAll { it.url == item.url }
+        current.add(0, item)
+        save(current.take(MAX_SIZE))
+    }
 
-    override fun remove(url: String) = delegate().remove(url)
+    override fun remove(url: String) {
+        val current = load().toMutableList()
+        current.removeAll { it.url == url }
+        save(current)
+    }
 
-    override fun clear() = delegate().clear()
+    override fun clear() {
+        save(emptyList())
+    }
+
+    private fun save(items: List<HistoryItem>) {
+        val arr = JSONArray()
+        items.forEach { item ->
+            arr.put(
+                JSONObject().apply {
+                    put("url", item.url)
+                    put("platform", item.platform)
+                    put("title", item.title)
+                    put("timestamp", item.timestamp)
+                }
+            )
+        }
+        ctx().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_HISTORY, arr.toString())
+            .apply()
+    }
 }

@@ -16,10 +16,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -48,11 +46,8 @@ class ParseViewModel(
     private var parseTimerJob: Job? = null
 
     init {
-        // 异步加载历史(避免主线程 runBlocking 触发 ANR/StrictMode 闪退)
-        viewModelScope.launch {
-            val items = withContext(Dispatchers.IO) { history.load() }
-            _uiState.update { it.copy(history = it.history.copy(items = items)) }
-        }
+        // SharedPreferences 同步读取(内存缓存),不阻塞主线程
+        _uiState.update { it.copy(history = it.history.copy(items = history.load())) }
     }
 
     fun dispatch(intent: ParseIntent) {
@@ -144,11 +139,8 @@ class ParseViewModel(
                         title = result.title.ifBlank { result.content.take(30).ifBlank { "未命名" } },
                         timestamp = System.currentTimeMillis()
                     )
-                    withContext(Dispatchers.IO) {
-                        history.add(item)
-                        val items = history.load()
-                        _uiState.update { it.copy(history = it.history.copy(items = items)) }
-                    }
+                    history.add(item)
+                    _uiState.update { it.copy(history = it.history.copy(items = history.load())) }
                 }
             }
         }
@@ -228,13 +220,8 @@ class ParseViewModel(
     // ===== History =====
 
     private fun deleteHistory(item: HistoryItem) {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                history.remove(item.url)
-                val items = history.load()
-                _uiState.update { it.copy(history = it.history.copy(items = items)) }
-            }
-        }
+        history.remove(item.url)
+        _uiState.update { it.copy(history = it.history.copy(items = history.load())) }
     }
 
     private fun toggleHistory() {
@@ -242,12 +229,8 @@ class ParseViewModel(
     }
 
     private fun clearAllHistory() {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                history.clear()
-                _uiState.update { it.copy(history = it.history.copy(items = emptyList())) }
-            }
-        }
+        history.clear()
+        _uiState.update { it.copy(history = it.history.copy(items = emptyList())) }
     }
 
     // ===== Helpers =====

@@ -27,8 +27,8 @@ class NetworkManager(private val cookieManager: CookieManager) {
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
-            // 不设 cookieJar:避免自动保存平台风控 Cookie(如 XHS 反爬标记)导致后续请求被封。
-            // 各平台 Cookie 通过 HeaderFactory + CookieManager.get() 手动注入 Header。
+            // cookieJar 对齐 d520e09:XHS 反爬依赖 cookie,自动管理重定向间 cookie
+            .cookieJar(cookieManager.asOkHttpJar())
             .build()
     }
 
