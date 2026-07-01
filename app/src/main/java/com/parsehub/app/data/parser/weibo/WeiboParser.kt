@@ -31,6 +31,8 @@ class WeiboParser(
     override val displayName = "微博"
     override val platform = displayName
     override val matchPattern = """weibo\.(com|cn)"""
+    /** fid 是微博视频的关键参数(video.weibo.com/show?fid=...),不能被 cleanUrlParams 清理 */
+    override val reservedParameters = listOf("fid")
     private val TAG = "WeiboParser"
 
     override suspend fun doParse(url: String): ParseResult {
