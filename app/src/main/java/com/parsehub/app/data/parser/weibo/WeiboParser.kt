@@ -87,9 +87,9 @@ class WeiboParser(
         Log.d(TAG, "微博ID: $bid")
 
         val apiUrl = "https://weibo.com/ajax/statuses/show?id=$bid&isGetLongText=true"
-        val headers = HeaderFactory.weibo().toMutableMap().apply {
-            cookieManager.get("weibo")?.let { put("Cookie", it) }
-        }
+        // Cookie 由 CookieJar 统一管理(初始化时注入 SUB + 服务器响应自动更新)
+        // 不再手动设 Cookie header,避免被 OkHttp BridgeInterceptor 覆盖导致第二次请求失败
+        val headers = HeaderFactory.weibo()
         val json = network.fetchJson(apiUrl, headers) ?: return ParseResult(
             platform = platform,
             error = "无法连接微博 API"
@@ -285,8 +285,8 @@ class WeiboParser(
 
         val headers = HeaderFactory.weibo().toMutableMap().apply {
             put("Content-Type", "application/x-www-form-urlencoded")
-            cookieManager.get("weibo")?.let { put("Cookie", it) }
         }
+        // Cookie 由 CookieJar 统一管理,不再手动设 Cookie header
         val json = network.postForm(apiUrl, formData, headers, params) ?: return ParseResult(
             platform = platform,
             error = "无法连接微博 TV API"
