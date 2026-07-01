@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.parsehub.app.data.HistoryItem
 import com.parsehub.app.data.IParseHistory
 import com.parsehub.app.data.IParseRepository
+import com.parsehub.app.data.network.CookieManager
 import com.parsehub.app.data.ParseError
 import com.parsehub.app.data.ParseResult
 import com.parsehub.app.data.ParseStage
@@ -32,6 +33,7 @@ import java.io.File
 class ParseViewModel(
     private val repository: IParseRepository,
     private val history: IParseHistory,
+    private val cookieManager: CookieManager,
     private val clipboardProvider: () -> String? = { null },
     private val themeToggler: () -> Unit = {}
 ) : ViewModel() {
@@ -65,6 +67,10 @@ class ParseViewModel(
             }
             ParseIntent.ClearAllHistory -> clearAllHistory()
             ParseIntent.ToggleTheme -> themeToggler()
+            ParseIntent.OpenSettings -> openSettings()
+            ParseIntent.CloseSettings -> closeSettings()
+            is ParseIntent.UpdateCookie -> updateCookie(intent.platformId, intent.cookie)
+            ParseIntent.SaveSettings -> saveSettings()
         }
     }
 
@@ -272,6 +278,54 @@ class ParseViewModel(
         else -> null
     }
 
+    // ===== Settings =====
+
+    private fun openSettings() {
+        val all = cookieManager.getAll()
+        _uiState.update {
+            it.copy(
+                settings = it.settings.copy(
+                    showDialog = true,
+                    kuaishouCookie = all["kuaishou"] ?: "",
+                    xiaohongshuCookie = all["xiaohongshu"] ?: "",
+                    weiboCookie = all["weibo"] ?: "",
+                    douyinCookie = all["douyin"] ?: "",
+                    bilibiliCookie = all["bilibili"] ?: ""
+                )
+            )
+        }
+    }
+
+    private fun closeSettings() {
+        _uiState.update { it.copy(settings = it.settings.copy(showDialog = false)) }
+    }
+
+    private fun updateCookie(platformId: String, cookie: String) {
+        _uiState.update {
+            when (platformId) {
+                "kuaishou" -> it.copy(settings = it.settings.copy(kuaishouCookie = cookie))
+                "xiaohongshu" -> it.copy(settings = it.settings.copy(xiaohongshuCookie = cookie))
+                "weibo" -> it.copy(settings = it.settings.copy(weiboCookie = cookie))
+                "douyin" -> it.copy(settings = it.settings.copy(douyinCookie = cookie))
+                "bilibili" -> it.copy(settings = it.settings.copy(bilibiliCookie = cookie))
+                else -> it
+            }
+        }
+    }
+
+    private fun saveSettings() {
+        val s = _uiState.value.settings
+        cookieManager.set("kuaishou", s.kuaishouCookie)
+        cookieManager.set("xiaohongshu", s.xiaohongshuCookie)
+        cookieManager.set("weibo", s.weiboCookie)
+        cookieManager.set("douyin", s.douyinCookie)
+        cookieManager.set("bilibili", s.bilibiliCookie)
+        _uiState.update { it.copy(settings = it.settings.copy(showDialog = false)) }
+        viewModelScope.launch {
+            _effects.emit(UiEffect.Toast("设置已保存"))
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         parseTimerJob?.cancel()
@@ -284,7 +338,17 @@ data class ParseUiState(
     val input: InputState = InputState(),
     val parse: ParseState = ParseState(),
     val download: DownloadState = DownloadState(),
-    val history: HistoryState = HistoryState()
+    val history: HistoryState = HistoryState(),
+    val settings: SettingsState = SettingsState()
+)
+
+data class SettingsState(
+    val showDialog: Boolean = false,
+    val kuaishouCookie: String = "",
+    val xiaohongshuCookie: String = "",
+    val weiboCookie: String = "",
+    val douyinCookie: String = "",
+    val bilibiliCookie: String = ""
 )
 
 data class InputState(
@@ -325,6 +389,10 @@ sealed interface ParseIntent {
     data class HistoryItemClick(val item: HistoryItem) : ParseIntent
     object ClearAllHistory : ParseIntent
     object ToggleTheme : ParseIntent
+    object OpenSettings : ParseIntent
+    object CloseSettings : ParseIntent
+    data class UpdateCookie(val platformId: String, val cookie: String) : ParseIntent
+    object SaveSettings : ParseIntent
 }
 
 // ===== UiEffect(spec 3.2 单次事件) =====

@@ -3,8 +3,9 @@ package com.parsehub.app.data
 import android.content.Context
 import android.util.Log
 import com.parsehub.app.data.download.DownloadManager
-import com.parsehub.app.data.network.InMemoryCookieManager
+import com.parsehub.app.data.network.CookieManager
 import com.parsehub.app.data.network.NetworkManager
+import com.parsehub.app.data.network.PersistentCookieManager
 import com.parsehub.app.data.parser.bilibili.BilibiliParser
 import com.parsehub.app.data.parser.douyin.DouyinParser
 import com.parsehub.app.data.parser.kuaishou.KuaishouParser
@@ -28,7 +29,8 @@ import java.io.File
  */
 class ParseRepository private constructor(
     private val registry: ParserRegistry,
-    private val downloader: DownloadManager
+    private val downloader: DownloadManager,
+    val cookieManager: CookieManager
 ) : IParseRepository {
 
     private val TAG = "ParseRepository"
@@ -71,7 +73,7 @@ class ParseRepository private constructor(
             }
 
         private fun build(context: Context): ParseRepository {
-            val cookieManager = InMemoryCookieManager()
+            val cookieManager = PersistentCookieManager(context)
             val network = NetworkManager(cookieManager)
             val registry = ParserRegistry(
                 parsers = listOf(
@@ -83,7 +85,7 @@ class ParseRepository private constructor(
                 )
             )
             val downloader = DownloadManager(context, network)
-            return ParseRepository(registry, downloader)
+            return ParseRepository(registry, downloader, cookieManager)
         }
     }
 }

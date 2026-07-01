@@ -14,7 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.parsehub.app.ui.theme.Spacing
 
-/** ParseScreen(spec 3.4:<80 行,纯 UI 组合,零业务逻辑;副作用集中在 ParseRoute) */
+/** ParseScreen — 纯 UI 组合,零业务逻辑;副作用集中在 ParseRoute */
 @Composable
 fun ParseScreen(
     state: ParseUiState,
@@ -24,7 +24,11 @@ fun ParseScreen(
 ) {
     val input = state.input; val parse = state.parse; val history = state.history
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        HeroHeader(isDarkTheme = isDarkTheme, onToggleTheme = { onIntent(ParseIntent.ToggleTheme) })
+        HeroHeader(
+            isDarkTheme = isDarkTheme,
+            onToggleTheme = { onIntent(ParseIntent.ToggleTheme) },
+            onOpenSettings = { onIntent(ParseIntent.OpenSettings) }
+        )
         Column(modifier = Modifier.padding(Spacing.lg)) {
             LinkInputCard(
                 url = input.url, detectedPlatformId = input.detectedPlatformId,
@@ -71,5 +75,16 @@ fun ParseScreen(
             }
             FooterInfo()
         }
+    }
+
+    if (state.settings.showDialog) {
+        SettingsDialog(
+            state = state.settings,
+            onDismiss = { onIntent(ParseIntent.CloseSettings) },
+            onCookieChange = { platformId, cookie ->
+                onIntent(ParseIntent.UpdateCookie(platformId, cookie))
+            },
+            onSave = { onIntent(ParseIntent.SaveSettings) }
+        )
     }
 }

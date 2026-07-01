@@ -1,5 +1,6 @@
 package com.parsehub.app.ui.screens.home
 
+import com.parsehub.app.data.FakeCookieManager
 import com.parsehub.app.data.FakeParseHistory
 import com.parsehub.app.data.FakeParseRepository
 import com.parsehub.app.data.HistoryItem
@@ -40,6 +41,7 @@ class ParseViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var fakeRepo: FakeParseRepository
     private lateinit var fakeHistory: FakeParseHistory
+    private lateinit var fakeCookieManager: FakeCookieManager
     private var clipboardContent: String? = null
     private var themeToggleCount: Int = 0
     private lateinit var viewModel: ParseViewModel
@@ -50,11 +52,13 @@ class ParseViewModelTest {
         Dispatchers.setMain(testDispatcher)
         fakeRepo = FakeParseRepository()
         fakeHistory = FakeParseHistory()
+        fakeCookieManager = FakeCookieManager()
         clipboardContent = null
         themeToggleCount = 0
         viewModel = ParseViewModel(
             repository = fakeRepo,
             history = fakeHistory,
+            cookieManager = fakeCookieManager,
             clipboardProvider = { clipboardContent },
             themeToggler = { themeToggleCount++ }
         )
@@ -358,7 +362,7 @@ class ParseViewModelTest {
         fakeHistory.seed(item1)
         fakeHistory.seed(item2)
         // 重新创建 VM 以加载预填历史
-        viewModel = ParseViewModel(fakeRepo, fakeHistory, { null }, { })
+        viewModel = ParseViewModel(fakeRepo, fakeHistory, fakeCookieManager, { null }, { })
         assertEquals(2, viewModel.uiState.value.history.items.size)
 
         viewModel.dispatch(ParseIntent.DeleteHistory(item1))

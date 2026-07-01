@@ -1,6 +1,10 @@
 package com.parsehub.app.data
 
 import android.content.Context
+import com.parsehub.app.data.network.CookieManager
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import java.io.File
 
 /**
@@ -82,4 +86,22 @@ class FakeParseHistory : IParseHistory {
 
     /** 测试辅助:外部预填数据 */
     fun seed(item: HistoryItem) = add(item)
+}
+
+/**
+ * CookieManager 测试替身 — 纯内存,无 SharedPreferences 依赖
+ */
+class FakeCookieManager : CookieManager {
+    private val cookies = mutableMapOf<String, String>()
+
+    override fun get(platformId: String): String? = cookies[platformId]
+    override fun set(platformId: String, cookie: String) { cookies[platformId] = cookie }
+    override fun clear(platformId: String?) {
+        if (platformId == null) cookies.clear() else cookies.remove(platformId)
+    }
+    override fun getAll(): Map<String, String> = cookies.toMap()
+    override fun asOkHttpJar(): CookieJar = object : CookieJar {
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {}
+        override fun loadForRequest(url: HttpUrl): List<Cookie> = emptyList()
+    }
 }

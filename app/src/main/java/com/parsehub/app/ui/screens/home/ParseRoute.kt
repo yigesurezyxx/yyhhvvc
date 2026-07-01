@@ -19,6 +19,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.parsehub.app.data.ParseHistory
 import com.parsehub.app.data.ParseRepository
+import com.parsehub.app.data.network.CookieManager
 import com.parsehub.app.ui.theme.ThemeManager
 
 /**
@@ -34,12 +35,14 @@ import com.parsehub.app.ui.theme.ThemeManager
 @Composable
 fun ParseRoute(initialSharedUrl: String? = null) {
     val context = LocalContext.current
+    val repo = ParseRepository.getInstance(context)
     val viewModel: ParseViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
                 ParseViewModel(
-                    repository = ParseRepository.getInstance(context),
+                    repository = repo,
                     history = ParseHistory,
+                    cookieManager = repo.cookieManager,
                     clipboardProvider = { readClipboard(context) },
                     themeToggler = { ThemeManager.toggle(context) }
                 )
