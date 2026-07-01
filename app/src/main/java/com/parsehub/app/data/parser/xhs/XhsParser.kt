@@ -59,26 +59,49 @@ class XhsParser(
     }
 
     /**
-     * 抓取 HTML — 用 NetworkManager 的 noRedirectClient + HeaderFactory.xhs()
+     * 抓取 HTML(spec 5:双策略降级)
+     *
+     * 策略 1:noRedirect client(对齐 parse_hub_bot httpx follow_redirects=False)
+     *   - 避免 OkHttp 跟随 XHS 反爬重定向链(每次 302 是额外往返,是 20s 卡顿主因)
+     *   - getRawUrl 已处理 xhslink 短链重定向,fetchHtml 不应再重定向
+     *
+     * 策略 2(降级):noRedirect 拿到 3xx 或空 body 时,用 followRedirect client 重试
+     *   - 兜底场景:部分链接必须跟随重定向才能拿到真实页面
      */
     private fun fetchHtml(url: String): String? {
+        val headers = HeaderFactory.xhs()
+        // 策略 1:noRedirect
+        val body = executeRequest(network.newNoRedirectClient(), url, headers)
+        if (!body.isNullOrEmpty() && body.length > 500) {
+            Log.d(TAG, "noRedirect 成功,HTML长度: ${body.length}")
+            return body
+        }
+        // 策略 2:降级 followRedirect
+        Log.d(TAG, "noRedirect 拿到空/短 body(长度=${body?.length ?: 0}),降级 followRedirect")
+        val fallback = executeRequest(network.client, url, headers)
+        if (!fallback.isNullOrEmpty()) {
+            Log.d(TAG, "followRedirect 降级成功,HTML长度: ${fallback.length}")
+        }
+        return fallback
+    }
+
+    private fun executeRequest(
+        client: okhttp3.OkHttpClient,
+        url: String,
+        headers: Map<String, String>
+    ): String? {
         return try {
-            val noRedirectClient = network.newNoRedirectClient()
             val request = Request.Builder()
                 .url(url)
-                .apply { HeaderFactory.xhs().forEach { (k, v) -> header(k, v) } }
+                .apply { headers.forEach { (k, v) -> header(k, v) } }
                 .get()
                 .build()
-
-            noRedirectClient.newCall(request).execute().use { response ->
-                Log.d(TAG, "HTTP ${response.code}, Content-Length: ${response.body?.contentLength()}")
-                val body = response.body?.string()
-                if (response.isSuccessful) body
-                else if (!body.isNullOrEmpty()) body  // 非 2xx 也尝试读(可能是反爬页面)
-                else null
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "HTTP ${response.code}")
+                response.body?.string()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "抓取 HTML 失败: ${e.message}")
+            Log.e(TAG, "请求失败: ${e.message}")
             null
         }
     }
