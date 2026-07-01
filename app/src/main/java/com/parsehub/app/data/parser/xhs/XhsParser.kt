@@ -38,47 +38,44 @@ class XhsParser(
     private val TAG = "XhsParser"
 
     override suspend fun doParse(url: String): ParseResult {
-        // 策略1: httpx UA + noRedirect(原版对齐 parse_hub_bot)
-        Log.d(TAG, "策略1: httpx UA + noRedirect")
+        // 策略1: httpx UA + noRedirect(对齐 parse_hub_bot:httpx 默认 follow_redirects=False)
+        // 测试验证: httpx UA 请求长链返回 200 + 完整 HTML(850KB),mobile UA 会被风控(302)
+        Log.d(TAG, "策略1: httpx UA + noRedirect, url=$url")
         val html1 = fetchHtml(url, HTTPX_DEFAULT_UA, redirect = false)
         if (html1 != null) {
-            Log.d(TAG, "策略1 HTML长度: ${html1.length}")
             val state = extractInitialState(html1)
             if (state != null) {
-                Log.d(TAG, "策略1 成功提取 __INITIAL_STATE__")
+                Log.d(TAG, "策略1 成功, HTML长度=${html1.length}")
                 return parseNoteData(state)
             }
-            Log.d(TAG, "策略1 HTML 中未找到 __INITIAL_STATE__(可能是反爬页面)")
-        } else {
-            Log.d(TAG, "策略1 拿到空 HTML")
+            Log.d(TAG, "策略1 未找到 __INITIAL_STATE__(bodyLen=${html1.length})")
         }
 
-        // 策略2: mobile UA + followRedirect(fallback,应对 httpx UA 被风控)
-        Log.d(TAG, "策略2: mobile UA + followRedirect")
-        val html2 = fetchHtml(url, MOBILE_UA, redirect = true)
+        // 策略2: desktop UA + noRedirect(httpx UA 失败时的兜底,desktop UA 测试也能拿到 850KB)
+        Log.d(TAG, "策略2: desktop UA + noRedirect")
+        val html2 = fetchHtml(url, DEFAULT_UA, redirect = false)
         if (html2 != null) {
-            Log.d(TAG, "策略2 HTML长度: ${html2.length}")
             val state = extractInitialState(html2)
             if (state != null) {
-                Log.d(TAG, "策略2 成功提取 __INITIAL_STATE__")
+                Log.d(TAG, "策略2 成功, HTML长度=${html2.length}")
                 return parseNoteData(state)
             }
-            Log.d(TAG, "策略2 HTML 中未找到 __INITIAL_STATE__")
+            Log.d(TAG, "策略2 未找到 __INITIAL_STATE__(bodyLen=${html2.length})")
         }
 
-        // 策略3: desktop UA + followRedirect(最后兜底)
-        Log.d(TAG, "策略3: desktop UA + followRedirect")
-        val html3 = fetchHtml(url, DEFAULT_UA, redirect = true)
+        // 策略3: httpx UA + followRedirect(应对 getRawUrl 重定向失败导致 url 仍是短链的情况)
+        Log.d(TAG, "策略3: httpx UA + followRedirect")
+        val html3 = fetchHtml(url, HTTPX_DEFAULT_UA, redirect = true)
         if (html3 != null) {
-            Log.d(TAG, "策略3 HTML长度: ${html3.length}")
             val state = extractInitialState(html3)
             if (state != null) {
-                Log.d(TAG, "策略3 成功提取 __INITIAL_STATE__")
+                Log.d(TAG, "策略3 成功, HTML长度=${html3.length}")
                 return parseNoteData(state)
             }
+            Log.d(TAG, "策略3 未找到 __INITIAL_STATE__(bodyLen=${html3.length})")
         }
 
-        Log.e(TAG, "所有策略均失败,url=$url")
+        Log.e(TAG, "所有策略均失败, url=$url")
         return ParseResult(
             platform = platform,
             error = "小红书解析失败,可能需要登录或链接已失效"
@@ -88,17 +85,18 @@ class XhsParser(
     private fun fetchHtml(url: String, ua: String, redirect: Boolean): String? {
         return try {
             val client = if (redirect) network.client else network.newNoRedirectClient()
+            // 关键: 不手动设 Accept-Encoding,让 OkHttp 自动处理 gzip 解压
+            // 手动设 "gzip" 会导致 OkHttp BridgeInterceptor 不自动解压,body 变成压缩 bytes(乱码)
             val request = Request.Builder()
                 .url(url)
                 .header("Accept", "*/*")
                 .header("User-Agent", ua)
-                .header("Accept-Encoding", "gzip")
                 .get()
                 .build()
 
             client.newCall(request).execute().use { response ->
-                Log.d(TAG, "HTTP ${response.code}")
                 val body = response.body?.string()
+                Log.d(TAG, "HTTP ${response.code} ua=${ua.take(20)} redirect=$redirect bodyLen=${body?.length ?: 0}")
                 when {
                     response.isSuccessful && !body.isNullOrEmpty() -> body
                     !body.isNullOrEmpty() -> body  // 非2xx也尝试读(可能是反爬页面)
@@ -109,11 +107,6 @@ class XhsParser(
             Log.e(TAG, "fetchHtml 失败: ${e.message}")
             null
         }
-    }
-
-    private companion object {
-        const val MOBILE_UA =
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     }
 
     /**

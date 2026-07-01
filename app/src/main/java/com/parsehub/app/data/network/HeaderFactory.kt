@@ -13,11 +13,11 @@ object HeaderFactory {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
     const val HTTPX_UA = "python-httpx/0.28.1"
 
-    /** 小红书 HTML 抓取(对齐 parse_hub_bot httpx 默认头) */
+    /** 小红书 HTML 抓取(对齐 parse_hub_bot httpx 默认头)
+     *  注: 不设 Accept-Encoding,让 OkHttp 自动处理 gzip 解压(手动设会导致不自动解压) */
     fun xhs(): Map<String, String> = mapOf(
         "Accept" to "*/*",
-        "User-Agent" to HTTPX_UA,
-        "Accept-Encoding" to "gzip"
+        "User-Agent" to HTTPX_UA
     )
 
     /** 抖音 API/Web */
