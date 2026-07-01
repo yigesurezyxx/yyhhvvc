@@ -38,7 +38,7 @@ import com.parsehub.app.ui.theme.Spacing
 import com.parsehub.app.ui.theme.StatusColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.foundation.shadow
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.luminance
 
 /**
