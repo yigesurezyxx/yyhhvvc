@@ -158,8 +158,9 @@ class ParseUtilsTest {
 
     @Test
     fun getWeiboId_returnsOid_fromFidParam() {
+        // 完整 fid (type:id) 作为微博 TV API 的 oid,不能 split 只取后半段
         val url = "https://video.weibo.com/show?fid=1034:5315286551691432"
-        assertEquals("5315286551691432", ParseUtils.getWeiboId(url))
+        assertEquals("1034:5315286551691432", ParseUtils.getWeiboId(url))
     }
 
     @Test

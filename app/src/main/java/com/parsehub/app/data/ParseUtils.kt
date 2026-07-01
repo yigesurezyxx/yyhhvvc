@@ -80,12 +80,11 @@ object ParseUtils {
         val statusPattern = "/status/([^/?#]+)".toRegex()
         statusPattern.find(url)?.let { return it.groupValues[1] }
 
-        // 2. fid=1034:oid 格式（微博视频）
+        // 2. fid=1034:5315286551691432 格式（微博视频）
+        // 完整 fid (type:id) 作为 TV API 的 oid,不能 split 只取后半段
         val fidPattern = "fid=([^&]+)".toRegex()
         fidPattern.find(url)?.let { match ->
-            val fid = match.groupValues[1]
-            val parts = fid.split(":")
-            return if (parts.size >= 2) parts[1] else fid
+            return match.groupValues[1]
         }
 
         // 3. 取 path 最后一段（对齐 parse_hub_bot: parsed.path.split("/")[-1]）

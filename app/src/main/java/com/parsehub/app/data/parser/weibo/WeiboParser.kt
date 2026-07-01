@@ -55,11 +55,11 @@ class WeiboParser(
     }
 
     private fun getFidFromUrl(url: String): String? {
+        // 完整 fid 格式为 "1034:5315286551691432"(type:id),微博 TV API 的 oid 需要完整 fid
+        // 之前错误地 split(":") 只取后半段,导致 API 返回 302 失败
         val fidPattern = "fid=([^&]+)".toRegex()
         val match = fidPattern.find(url) ?: return null
-        val fid = match.groupValues[1]
-        val parts = fid.split(":")
-        return if (parts.size >= 2) parts[1] else fid
+        return match.groupValues[1]
     }
 
     private fun isWeiboTv(url: String): Boolean {
