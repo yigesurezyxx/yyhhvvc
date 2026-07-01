@@ -4,6 +4,34 @@
 >
 > 粘贴链接 → 一键解析 → 保存到相册。就是这么简单。
 
+**当前版本:v1.1.0**
+
+---
+
+## 📋 更新日志
+
+### v1.1.0 (2026-07-01) — 框架优化 + 澎湃OS适配
+
+**框架优化**
+- Repository 拆分:从 1027 行瘦身到 ~90 行,职责单一化
+- 引入 ParserRegistry + IParser 接口,新增平台不改调度代码(开闭原则)
+- PlatformMatcher 数据驱动 URL 匹配,替代 when 硬编码
+- NetworkManager 统一 OkHttpClient(带 CookieJar + 超时)
+- HeaderFactory 统一 UA/Referer 策略,Parser 不再自己拼 Header
+- DownloadManager 迁移自 Repository,职责清晰
+- Design Token 体系(Spacing/Radius/Elevation/Motion 全部 token 化)
+
+**Bug 修复**
+- 小红书解析:移除手动 Accept-Encoding 头(OkHttp 不自动解压 gzip 导致失败)
+- 微博视频解析:fid 参数不再被 cleanUrlParams 清理 + 完整 fid 作 OID
+- 微博重复解析失效:CookieJar 累加不去重 + 覆盖手动 Cookie header 问题
+- 全局崩溃保护:UncaughtExceptionHandler 自动重启而非闪退退出
+
+**澎湃OS 适配(Android 14)**
+- networkSecurityConfig 域名白名单替代全局 cleartextTraffic
+- 处理 SEND intent(从分享菜单接收链接,自动填入输入框)
+- Android 13+ POST_NOTIFICATIONS 权限运行时请求
+
 ---
 
 ## ✨ 功能
