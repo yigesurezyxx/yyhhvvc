@@ -49,3 +49,17 @@ enum class ParseStage(val label: String) {
     FETCHING("正在抓取页面内容..."),
     DONE("解析完成")
 }
+
+/**
+ * 分类错误(spec 3.5):不同类型对应不同 Icon/文案
+ * - 纯 Kotlin,无 Compose 依赖,VM 可直接持有
+ *
+ * 注:PlatformItem / PlatformCapability 定义在 ui.theme(Icons.kt),
+ * 因为它们含 Compose 类型(Color/ImageVector),属 UI 层模型,VM 不直接持有。
+ */
+sealed class ParseError(val type: String, open val message: String) {
+    class Network(override val message: String) : ParseError("network", message)
+    class Unsupported(val platform: String) : ParseError("unsupported", "$platform 暂不支持")
+    class ParseFailed(override val message: String) : ParseError("parse_failed", message)
+    class InvalidLink(override val message: String) : ParseError("invalid_link", message)
+}

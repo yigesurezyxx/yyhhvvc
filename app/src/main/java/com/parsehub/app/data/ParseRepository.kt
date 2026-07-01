@@ -20,7 +20,7 @@ import java.io.FileOutputStream
 import java.net.URLDecoder
 import java.util.concurrent.TimeUnit
 
-class ParseRepository(private val context: Context) {
+class ParseRepository(private val context: Context) : IParseRepository {
     private val TAG = "ParseRepository"
 
     // 内存级 CookieJar，自动管理重定向间的 cookie（XHS 反爬依赖 cookie）
@@ -63,9 +63,9 @@ class ParseRepository(private val context: Context) {
      * 解析入口
      * @param onProgress 进度回调，用于 UI 展示解析阶段（检测平台/抓取页面/提取媒体）
      */
-    suspend fun parse(
+    override suspend fun parse(
         url: String,
-        onProgress: ((ParseStage) -> Unit)? = null
+        onProgress: ((ParseStage) -> Unit)?
     ): ParseResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         withTimeoutOrNull(20_000L) {
@@ -882,10 +882,10 @@ class ParseRepository(private val context: Context) {
         return "xiaohongshu" in url || "xhslink" in url
     }
 
-    suspend fun downloadMedia(
+    override suspend fun downloadMedia(
         media: MediaInfo,
-        referer: String? = null,
-        onProgress: ((Int) -> Unit)? = null
+        referer: String?,
+        onProgress: ((Int) -> Unit)?
     ): String? = withContext(Dispatchers.IO) {
         val url = media.url ?: return@withContext null
         try {
@@ -949,7 +949,7 @@ class ParseRepository(private val context: Context) {
         }
     }
 
-    fun saveToGallery(file: File, type: String): Boolean {
+    override fun saveToGallery(file: File, type: String): Boolean {
         return try {
             val isVideo = type.contains("video", ignoreCase = true)
             val contentValues = android.content.ContentValues()
