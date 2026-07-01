@@ -38,60 +38,82 @@ class XhsParser(
     private val TAG = "XhsParser"
 
     override suspend fun doParse(url: String): ParseResult {
-        // 1. GET HTML — 对齐 parse_hub_bot 的 __fetch_html
-        //    httpx 默认头: Accept: */*, User-Agent: python-httpx/0.28.1
-        //    OkHttp 默认头: User-Agent: okhttp/4.x.x (会被XHS拒绝)
-        //    所以手动设为 httpx 的默认值
-        val html = fetchHtml(url) ?: return ParseResult(
-            platform = platform,
-            error = "无法加载小红书页面"
-        )
-        Log.d(TAG, "HTML长度: ${html.length}")
+        // 策略1: httpx UA + noRedirect(原版对齐 parse_hub_bot)
+        Log.d(TAG, "策略1: httpx UA + noRedirect")
+        val html1 = fetchHtml(url, HTTPX_DEFAULT_UA, redirect = false)
+        if (html1 != null) {
+            Log.d(TAG, "策略1 HTML长度: ${html1.length}")
+            val state = extractInitialState(html1)
+            if (state != null) {
+                Log.d(TAG, "策略1 成功提取 __INITIAL_STATE__")
+                return parseNoteData(state)
+            }
+            Log.d(TAG, "策略1 HTML 中未找到 __INITIAL_STATE__(可能是反爬页面)")
+        } else {
+            Log.d(TAG, "策略1 拿到空 HTML")
+        }
 
-        // 2. 提取 __INITIAL_STATE__ — 对齐 __extract_data
-        val initialState = extractInitialState(html) ?: return ParseResult(
+        // 策略2: mobile UA + followRedirect(fallback,应对 httpx UA 被风控)
+        Log.d(TAG, "策略2: mobile UA + followRedirect")
+        val html2 = fetchHtml(url, MOBILE_UA, redirect = true)
+        if (html2 != null) {
+            Log.d(TAG, "策略2 HTML长度: ${html2.length}")
+            val state = extractInitialState(html2)
+            if (state != null) {
+                Log.d(TAG, "策略2 成功提取 __INITIAL_STATE__")
+                return parseNoteData(state)
+            }
+            Log.d(TAG, "策略2 HTML 中未找到 __INITIAL_STATE__")
+        }
+
+        // 策略3: desktop UA + followRedirect(最后兜底)
+        Log.d(TAG, "策略3: desktop UA + followRedirect")
+        val html3 = fetchHtml(url, DEFAULT_UA, redirect = true)
+        if (html3 != null) {
+            Log.d(TAG, "策略3 HTML长度: ${html3.length}")
+            val state = extractInitialState(html3)
+            if (state != null) {
+                Log.d(TAG, "策略3 成功提取 __INITIAL_STATE__")
+                return parseNoteData(state)
+            }
+        }
+
+        Log.e(TAG, "所有策略均失败,url=$url")
+        return ParseResult(
             platform = platform,
             error = "小红书解析失败,可能需要登录或链接已失效"
         )
-
-        // 3. 解析笔记 — 对齐 __parse
-        return parseNoteData(initialState)
     }
 
-    /**
-     * 抓取 HTML — 对齐 parse_hub_bot 的 XHSAPI.__fetch_html
-     * 不发任何自定义头,只发 httpx 默认的 Accept 和 User-Agent
-     *
-     * 关键: httpx 默认 follow_redirects=False,这里用独立 client 关闭重定向,
-     * 避免 OkHttp 跟随 XHS 反爬重定向链(每次 302 都是一次额外往返,是 20s 卡顿的主因之一)。
-     * getRawUrl 已处理 xhslink 短链重定向,fetchHtml 不应再重定向。
-     */
-    private fun fetchHtml(url: String): String? {
+    private fun fetchHtml(url: String, ua: String, redirect: Boolean): String? {
         return try {
-            val noRedirectClient = network.newNoRedirectClient()
-
+            val client = if (redirect) network.client else network.newNoRedirectClient()
             val request = Request.Builder()
                 .url(url)
                 .header("Accept", "*/*")
-                .header("User-Agent", HTTPX_DEFAULT_UA)
+                .header("User-Agent", ua)
                 .header("Accept-Encoding", "gzip")
                 .get()
                 .build()
 
-            noRedirectClient.newCall(request).execute().use { response ->
-                Log.d(TAG, "HTTP ${response.code}, Content-Length: ${response.body?.contentLength()}")
-                if (response.isSuccessful) {
-                    response.body?.string()
-                } else {
-                    // 非 2xx 也尝试读 body(可能是反爬页面)
-                    val body = response.body?.string()
-                    if (body != null && body.isNotEmpty()) body else null
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "HTTP ${response.code}")
+                val body = response.body?.string()
+                when {
+                    response.isSuccessful && !body.isNullOrEmpty() -> body
+                    !body.isNullOrEmpty() -> body  // 非2xx也尝试读(可能是反爬页面)
+                    else -> null
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "抓取 HTML 失败: ${e.message}")
+            Log.e(TAG, "fetchHtml 失败: ${e.message}")
             null
         }
+    }
+
+    private companion object {
+        const val MOBILE_UA =
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     }
 
     /**

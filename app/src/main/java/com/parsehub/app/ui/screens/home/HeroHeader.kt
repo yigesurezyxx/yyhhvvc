@@ -30,7 +30,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -147,14 +146,14 @@ private fun AuroraBlob(
     offset: Pair<androidx.compose.ui.unit.Dp, androidx.compose.ui.unit.Dp>,
     modifier: Modifier = Modifier
 ) {
+    // 去掉 Modifier.blur(API<31 渲染崩溃风险),用径向渐变 + 低 alpha 代替软化效果
     Box(
         modifier = modifier
             .offset(x = offset.first, y = offset.second)
             .size(size)
-            .blur(40.dp)
             .background(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color.White.copy(alpha = 0.05f), Color.Transparent)
+                    colors = listOf(Color.White.copy(alpha = 0.08f), Color.Transparent)
                 ),
                 shape = CircleShape
             )
